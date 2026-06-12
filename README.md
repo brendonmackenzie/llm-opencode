@@ -4,19 +4,23 @@ An [LLM](https://llm.datasette.io/) plugin for [OpenCode Go](https://opencode.ai
 
 ## Installation
 
-Install this plugin in the same environment as LLM:
+Since the plugin is not yet on PyPI, install it directly from GitHub using `uv tool install`:
 
 ```bash
-llm install llm-opencode
+uv tool install llm --with "llm-opencode @ git+https://github.com/brendonmackenzie/llm-opencode.git"
 ```
 
-Or with uv:
+If you already have `llm` installed with other plugins, add it to the existing install. For example:
 
 ```bash
-uv tool install llm --with llm-opencode
+uv tool install llm \
+  --with "llm-opencode @ git+https://github.com/brendonmackenzie/llm-opencode.git" \
+  --with llm-git --with llm-openrouter \ 
+  --with llm-plugin-generator --with llm-uv-tool \
+  --with toml --reinstall
 ```
 
-Or install from a local checkout:
+To install from a local checkout during development:
 
 ```bash
 uv tool install llm --with /path/to/llm-opencode --reinstall
