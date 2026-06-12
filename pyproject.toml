@@ -1,0 +1,25 @@
+[project]
+name = "llm-opencode"
+version = "0.1"
+description = "LLM plugin for OpenCode Go subscription models"
+readme = "README.md"
+authors = [{name = "Brendon"}]
+license = {text = "Apache-2.0"}
+classifiers = [
+    "License :: OSI Approved :: Apache Software License"
+]
+dependencies = [
+    "llm>=0.27.1",
+    "httpx",
+    "openai>=1.57.0",
+    "anthropic",
+]
+
+[project.urls]
+Homepage = "https://github.com/brendon/llm-opencode"
+
+[project.entry-points.llm]
+opencode = "llm_opencode"
+
+[project.optional-dependencies]
+test = ["pytest", "pytest-recording", "inline-snapshot"]
