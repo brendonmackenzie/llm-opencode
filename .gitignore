@@ -4,3 +4,6 @@ build/
 dist/
 .idea/
 .venv/
+uv.lock
+.coverage
+.pytest_cache/

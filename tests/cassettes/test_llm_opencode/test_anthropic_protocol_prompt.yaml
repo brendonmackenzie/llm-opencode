@@ -51,7 +51,7 @@ interactions:
     body:
       string: 'event: message_start
 
-        data: {"type":"message_start","message":{"id":"067a92ad958cd17d551a3b48e0da1da9","type":"message","role":"assistant","content":[],"model":"MiniMax-M3","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":54,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":114}}}
+        data: {"type":"message_start","message":{"id":"067aa87fcf5a7716b96bf437fc1bde8a","type":"message","role":"assistant","content":[],"model":"MiniMax-M3","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":54,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":114}}}
 
 
         event: ping
@@ -97,7 +97,7 @@ interactions:
         '
     headers:
       CF-RAY:
-      - a0a50d9a9a2cff15-PDX
+      - a0a595fd0e921f9b-PDX
       Cache-Control:
       - no-cache
       Cf-Placement:
@@ -107,7 +107,7 @@ interactions:
       Content-Type:
       - text/event-stream; charset=utf-8
       Date:
-      - Fri, 12 Jun 2026 01:23:58 GMT
+      - Fri, 12 Jun 2026 02:57:04 GMT
       Server:
       - cloudflare
       Transfer-Encoding:
