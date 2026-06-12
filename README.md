@@ -10,10 +10,16 @@ Install this plugin in the same environment as LLM:
 llm install llm-opencode
 ```
 
-Or install from the project directory:
+Or with uv:
 
 ```bash
-llm install -e /path/to/llm-opencode
+uv tool install llm --with llm-opencode
+```
+
+Or install from a local checkout:
+
+```bash
+uv tool install llm --with /path/to/llm-opencode --reinstall
 ```
 
 ## Configuration
@@ -36,6 +42,12 @@ List available models:
 llm opencode models
 ```
 
+List all models registered with LLM:
+
+```bash
+llm models | grep opencode-go
+```
+
 Run a prompt with an OpenAI-protocol model:
 
 ```bash
@@ -56,28 +68,14 @@ llm chat -m opencode-go/glm-5.1
 
 ## Available Models
 
-| Model ID | Protocol | Description |
-|----------|----------|-------------|
-| `glm-5` | OpenAI | GLM-5 |
-| `glm-5.1` | OpenAI | GLM-5.1 |
-| `kimi-k2.5` | OpenAI | Kimi K2.5 |
-| `kimi-k2.6` | OpenAI | Kimi K2.6 |
-| `mimo-v2` | OpenAI | MiMo V2 |
-| `mimo-v2-pro` | OpenAI | MiMo V2 Pro |
-| `mimo-v2.5` | OpenAI | MiMo V2.5 |
-| `mimo-v2.5-pro` | OpenAI | MiMo V2.5 Pro |
-| `mimo-v2-omni` | OpenAI | MiMo V2 Omni |
-| `deepseek-v4-pro` | OpenAI | DeepSeek V4 Pro |
-| `deepseek-v4-flash` | OpenAI | DeepSeek V4 Flash |
-| `minimax-m2.5` | Anthropic | MiniMax M2.5 |
-| `minimax-m2.7` | Anthropic | MiniMax M2.7 |
-| `minimax-m3` | Anthropic | MiniMax M3 |
-| `qwen3.5-plus` | Anthropic | Qwen3.5 Plus |
-| `qwen3.6-plus` | Anthropic | Qwen3.6 Plus |
-| `qwen3.7-plus` | Anthropic | Qwen3.7 Plus |
-| `qwen3.7-max` | Anthropic | Qwen3.7 Max |
+The model list is fetched dynamically from the OpenCode Go API. Run `llm opencode models` for the current list.
 
-The model list is fetched dynamically from the OpenCode Go API and may change as new models are added.
+Available models broadly fall into two protocol groups:
+
+| Protocol | Models |
+|----------|--------|
+| OpenAI | DeepSeek, GLM, Kimi K2.5/2.6, MiMo V2/V2.5, MiMo Omni |
+| Anthropic | MiniMax M2.5/M2.7/M3, Qwen3.5/3.6/3.7 Plus/Max |
 
 ## Options
 
@@ -85,8 +83,8 @@ The model list is fetched dynamically from the OpenCode Go API and may change as
 
 Anthropic-protocol models (MiniMax, Qwen) support the following options:
 
-- `-o max_tokens N` - Maximum number of tokens to generate (default: 4096)
-- `-o temperature F` - Temperature for sampling (0.0-1.0)
+- `-o max_tokens N` — Maximum number of tokens to generate (default: 4096)
+- `-o temperature F` — Temperature for sampling (0.0–1.0)
 
 Example:
 
@@ -96,15 +94,22 @@ llm -m opencode-go/minimax-m3 -o max_tokens 100 -o temperature 0.7 "Hello"
 
 ## Development
 
-To set up for development:
+Set up a local development environment with uv:
 
 ```bash
 cd llm-opencode
-pip install -e '.[test]'
+uv venv
+uv pip install -e '.[test]'
 ```
 
-Run tests:
+Run tests with coverage:
 
 ```bash
-pytest tests/
+uv run pytest --cov=.
+```
+
+Reinstall the plugin into the llm tool after changes:
+
+```bash
+uv tool install llm --with /path/to/llm-opencode --reinstall
 ```
