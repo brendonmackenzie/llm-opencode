@@ -169,6 +169,63 @@ def test_build_messages_no_conversation():
     assert messages == [{"role": "user", "content": "Hello"}]
 
 
+@pytest.mark.parametrize(
+    "model_cls",
+    [OpenCodeGoAnthropicChat, OpenCodeGoAnthropicAsyncChat],
+    ids=["sync", "async"],
+)
+def test_build_messages_multi_turn_conversation(model_cls):
+    model = model_cls(model_id="opencode-go/minimax-m3")
+
+    mock_prev1 = MagicMock()
+    mock_prev1.prompt.prompt = "First question"
+    mock_prev1.text_or_raise.return_value = "First answer"
+
+    mock_prev2 = MagicMock()
+    mock_prev2.prompt.prompt = "Second question"
+    mock_prev2.text_or_raise.return_value = "Second answer"
+
+    mock_conversation = MagicMock()
+    mock_conversation.responses = [mock_prev1, mock_prev2]
+
+    mock_prompt = MagicMock()
+    mock_prompt.prompt = "Third question"
+
+    messages = model._build_messages(mock_prompt, mock_conversation)
+    assert messages == [
+        {"role": "user", "content": "First question"},
+        {"role": "assistant", "content": "First answer"},
+        {"role": "user", "content": "Second question"},
+        {"role": "assistant", "content": "Second answer"},
+        {"role": "user", "content": "Third question"},
+    ]
+
+
+@pytest.mark.parametrize(
+    "model_cls",
+    [OpenCodeGoAnthropicChat, OpenCodeGoAnthropicAsyncChat],
+    ids=["sync", "async"],
+)
+def test_build_messages_with_none_prompt(model_cls):
+    model = model_cls(model_id="opencode-go/minimax-m3")
+
+    mock_prev_response = MagicMock()
+    mock_prev_response.prompt.prompt = "Previous question"
+    mock_prev_response.text_or_raise.return_value = "Previous answer"
+
+    mock_conversation = MagicMock()
+    mock_conversation.responses = [mock_prev_response]
+
+    mock_prompt = MagicMock()
+    mock_prompt.prompt = None
+
+    messages = model._build_messages(mock_prompt, mock_conversation)
+    assert messages == [
+        {"role": "user", "content": "Previous question"},
+        {"role": "assistant", "content": "Previous answer"},
+    ]
+
+
 def test_anthropic_prompt_no_stream(
     anthropic_chat_pair,
     make_message,
@@ -278,6 +335,88 @@ def test_anthropic_prompt_stream(
 
     assert chunks == ["Hello", " world"]
     anthropic_response.set_usage.assert_called_once_with(input=10, output=5)
+
+
+def test_anthropic_prompt_empty_content(
+    anthropic_chat_pair,
+    make_message,
+    make_prompt,
+    anthropic_response,
+):
+    cfg = anthropic_chat_pair
+
+    with patch(cfg["patch_path"]) as mock_cls:
+        mock_client = AsyncMock() if cfg["is_async"] else MagicMock()
+        mock_client.messages.create.return_value = make_message(content=[])
+        mock_cls.return_value = mock_client
+
+        chunks = collect_chunks(
+            cfg["model"],
+            make_prompt(),
+            stream=False,
+            response=anthropic_response,
+            conversation=None,
+            key="sk-test",
+        )
+
+    assert chunks == []
+    anthropic_response.set_usage.assert_called_once_with(input=10, output=5)
+
+
+def test_anthropic_prompt_stream_only_whitespace(
+    anthropic_chat_pair,
+    make_stream,
+    make_prompt,
+    anthropic_response,
+):
+    cfg = anthropic_chat_pair
+
+    with patch(cfg["patch_path"]) as mock_cls:
+        ctx, _stream_obj, _final_message = make_stream(text_chunks=("\n\n", "   ", "\t"))
+        mock_client = AsyncMock() if cfg["is_async"] else MagicMock()
+        if cfg["is_async"]:
+            mock_client.messages.stream = MagicMock(return_value=ctx)
+        else:
+            mock_client.messages.stream.return_value = ctx
+        mock_cls.return_value = mock_client
+
+        chunks = collect_chunks(
+            cfg["model"],
+            make_prompt(),
+            stream=True,
+            response=anthropic_response,
+            conversation=None,
+            key="sk-test",
+        )
+
+    assert chunks == []
+    anthropic_response.set_usage.assert_called_once_with(input=10, output=5)
+
+
+def test_anthropic_prompt_empty_user(
+    anthropic_chat_pair,
+    make_message,
+    make_prompt,
+    anthropic_response,
+):
+    cfg = anthropic_chat_pair
+
+    with patch(cfg["patch_path"]) as mock_cls:
+        mock_client = AsyncMock() if cfg["is_async"] else MagicMock()
+        mock_client.messages.create.return_value = make_message()
+        mock_cls.return_value = mock_client
+
+        collect_chunks(
+            cfg["model"],
+            make_prompt(prompt_text=""),
+            stream=False,
+            response=anthropic_response,
+            conversation=None,
+            key="sk-test",
+        )
+
+        call_kwargs = mock_client.messages.create.call_args[1]
+        assert call_kwargs["messages"] == []
 
 
 @patch("llm.get_key", return_value=None)
