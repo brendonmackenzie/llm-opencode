@@ -37,7 +37,7 @@ class AsyncIteratorWrapper:
 
 @pytest.fixture
 def make_message():
-    def _make(text="Hello", input_tokens=10, output_tokens=5):
+    def _make(text="Hello", input_tokens=10, output_tokens=5, content=None):
         text_block = MagicMock()
         text_block.type = "text"
         text_block.text = text
@@ -47,7 +47,7 @@ def make_message():
         usage.output_tokens = output_tokens
 
         message = MagicMock()
-        message.content = [text_block]
+        message.content = content if content is not None else [text_block]
         message.usage = usage
         message.model_dump.return_value = {"id": "msg_123"}
         return message
