@@ -115,16 +115,27 @@ def make_async_stream():
     return _make
 
 
+@pytest.fixture(
+    params=[
+        (OpenCodeGoAnthropicChat, "llm_opencode.Anthropic", False),
+        (OpenCodeGoAnthropicAsyncChat, "llm_opencode.AsyncAnthropic", True),
+    ],
+    ids=["sync", "async"],
+)
+def anthropic_chat_pair(request):
+    model_cls, patch_path, is_async = request.param
+    return {
+        "model": model_cls(model_id="opencode-go/minimax-m3"),
+        "patch_path": patch_path,
+        "is_async": is_async,
+    }
+
+
+@pytest.fixture
+def make_stream(anthropic_chat_pair, make_sync_stream, make_async_stream):
+    return make_sync_stream if not anthropic_chat_pair["is_async"] else make_async_stream
+
+
 @pytest.fixture
 def anthropic_response():
     return MagicMock()
-
-
-@pytest.fixture
-def anthropic_sync_model():
-    return OpenCodeGoAnthropicChat(model_id="opencode-go/minimax-m3")
-
-
-@pytest.fixture
-def anthropic_async_model():
-    return OpenCodeGoAnthropicAsyncChat(model_id="opencode-go/minimax-m3")
