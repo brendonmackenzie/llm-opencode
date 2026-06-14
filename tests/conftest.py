@@ -139,3 +139,16 @@ def make_stream(anthropic_chat_pair, make_sync_stream, make_async_stream):
 @pytest.fixture
 def anthropic_response():
     return MagicMock()
+
+
+@pytest.fixture
+def make_opencode_models():
+    """Factory for creating mock opencode models lists for VCR tests.
+
+    Returns a list of model definition dicts (each with an ``id`` key) so the
+    VCR-marked tests don't trigger a real HTTP GET to the models list endpoint
+    when the local cache file is missing.
+    """
+    def _make(*model_ids):
+        return [{"id": model_id} for model_id in model_ids]
+    return _make
