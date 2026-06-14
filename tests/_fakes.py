@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Optional
-from unittest.mock import AsyncMock
 
 
 @dataclass
@@ -89,6 +88,15 @@ class Stream:
 
 
 @dataclass
+class AsyncStream:
+    text_stream: object
+    final_message: Message
+
+    async def get_final_message(self) -> Message:
+        return self.final_message
+
+
+@dataclass
 class StreamContext:
     stream: Stream
 
@@ -101,7 +109,7 @@ class StreamContext:
 
 @dataclass
 class AsyncStreamContext:
-    stream: Stream
+    stream: AsyncStream
 
     async def __aenter__(self):
         return self.stream
@@ -122,12 +130,11 @@ def make_sync_stream(text_chunks=("\n\nHello", " world"), input_tokens=10, outpu
 
 
 def make_async_stream(text_chunks=("\n\nHello", " world"), input_tokens=10, output_tokens=5):
-    final_message = make_message(
-        input_tokens=input_tokens, output_tokens=output_tokens
+    return AsyncStreamContext(
+        stream=AsyncStream(
+            text_stream=AsyncIteratorWrapper(text_chunks),
+            final_message=make_message(
+                input_tokens=input_tokens, output_tokens=output_tokens
+            ),
+        )
     )
-    stream = Stream(
-        text_stream=AsyncIteratorWrapper(text_chunks),
-        final_message=final_message,
-    )
-    stream.get_final_message = AsyncMock(return_value=final_message)
-    return AsyncStreamContext(stream=stream)
