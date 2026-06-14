@@ -7,7 +7,7 @@ include = ["llm_opencode.py"]
 
 [project]
 name = "llm-opencode"
-version = "0.1a0"
+version = "0.1a1"
 description = "LLM plugin for OpenCode Go subscription models"
 readme = "README.md"
 authors = [{name = "Brendon"}]
