@@ -57,7 +57,7 @@ class OpenCodeGoAsyncChat(AsyncChat):
         return f"OpenCode Go: {self.model_id}"
 
 
-class OpenCodeGoAnthropicChat(llm.KeyModel):
+class _OpenCodeGoAnthropicChatBase:
     needs_key = "opencode"
     key_env_var = "OPENCODE_KEY"
     can_stream = True
@@ -96,25 +96,39 @@ class OpenCodeGoAnthropicChat(llm.KeyModel):
             messages.append({"role": "user", "content": prompt.prompt})
         return messages
 
+    def _build_kwargs(self, prompt, conversation):
+        kwargs = {
+            "model": self.anthropic_model_id,
+            "messages": self._build_messages(prompt, conversation),
+        }
+        if prompt.system:
+            kwargs["system"] = prompt.system
+        kwargs["max_tokens"] = prompt.options.max_tokens or 4096
+        if prompt.options.temperature is not None:
+            kwargs["temperature"] = prompt.options.temperature
+        return kwargs
+
+    def _iter_text_blocks(self, message):
+        if message.content:
+            for block in message.content:
+                if block.type == "text":
+                    yield block.text
+
+    def _apply_response(self, response, message):
+        response.response_json = message.model_dump()
+        response.set_usage(
+            input=message.usage.input_tokens,
+            output=message.usage.output_tokens,
+        )
+
+
+class OpenCodeGoAnthropicChat(_OpenCodeGoAnthropicChatBase, llm.KeyModel):
     def execute(self, prompt, stream, response, conversation, key):
         client = Anthropic(
             api_key=self.get_key(key),
             base_url=BASE_URL_ANTHROPIC,
         )
-
-        kwargs = {
-            "model": self.anthropic_model_id,
-            "messages": self._build_messages(prompt, conversation),
-        }
-
-        if prompt.system:
-            kwargs["system"] = prompt.system
-
-        max_tokens = prompt.options.max_tokens or 4096
-        kwargs["max_tokens"] = max_tokens
-
-        if prompt.options.temperature is not None:
-            kwargs["temperature"] = prompt.options.temperature
+        kwargs = self._build_kwargs(prompt, conversation)
 
         if stream:
             with client.messages.stream(**kwargs) as stream_obj:
@@ -127,82 +141,20 @@ class OpenCodeGoAnthropicChat(llm.KeyModel):
                         continue
                     yield text
             final_message = stream_obj.get_final_message()
-            response.response_json = final_message.model_dump()
-            response.set_usage(
-                input=final_message.usage.input_tokens,
-                output=final_message.usage.output_tokens,
-            )
+            self._apply_response(response, final_message)
         else:
             message = client.messages.create(**kwargs)
-            if message.content:
-                for block in message.content:
-                    if block.type == "text":
-                        yield block.text
-            response.response_json = message.model_dump()
-            response.set_usage(
-                input=message.usage.input_tokens,
-                output=message.usage.output_tokens,
-            )
+            yield from self._iter_text_blocks(message)
+            self._apply_response(response, message)
 
 
-class OpenCodeGoAnthropicAsyncChat(llm.AsyncKeyModel):
-    needs_key = "opencode"
-    key_env_var = "OPENCODE_KEY"
-    can_stream = True
-
-    def __init__(self, model_id, anthropic_model_id=None):
-        self.model_id = model_id
-        self.anthropic_model_id = anthropic_model_id or model_id.replace(
-            "opencode-go/", ""
-        )
-        self.attachment_types = set()
-
-    class Options(llm.Options):
-        max_tokens: Optional[int] = Field(
-            description="Maximum number of tokens to generate",
-            default=None,
-        )
-        temperature: Optional[float] = Field(
-            description="Temperature (0.0-1.0)",
-            default=None,
-        )
-
-    def __str__(self):
-        return f"OpenCode Go: {self.model_id}"
-
-    def _build_messages(self, prompt, conversation):
-        messages = []
-        if conversation:
-            for prev_response in conversation.responses:
-                user_content = prev_response.prompt.prompt
-                if user_content:
-                    messages.append({"role": "user", "content": user_content})
-                messages.append(
-                    {"role": "assistant", "content": prev_response.text_or_raise()}
-                )
-        if prompt.prompt:
-            messages.append({"role": "user", "content": prompt.prompt})
-        return messages
-
+class OpenCodeGoAnthropicAsyncChat(_OpenCodeGoAnthropicChatBase, llm.AsyncKeyModel):
     async def execute(self, prompt, stream, response, conversation, key):
         client = AsyncAnthropic(
             api_key=self.get_key(key),
             base_url=BASE_URL_ANTHROPIC,
         )
-
-        kwargs = {
-            "model": self.anthropic_model_id,
-            "messages": self._build_messages(prompt, conversation),
-        }
-
-        if prompt.system:
-            kwargs["system"] = prompt.system
-
-        max_tokens = prompt.options.max_tokens or 4096
-        kwargs["max_tokens"] = max_tokens
-
-        if prompt.options.temperature is not None:
-            kwargs["temperature"] = prompt.options.temperature
+        kwargs = self._build_kwargs(prompt, conversation)
 
         if stream:
             async with client.messages.stream(**kwargs) as stream_obj:
@@ -215,22 +167,12 @@ class OpenCodeGoAnthropicAsyncChat(llm.AsyncKeyModel):
                         continue
                     yield text
             final_message = await stream_obj.get_final_message()
-            response.response_json = final_message.model_dump()
-            response.set_usage(
-                input=final_message.usage.input_tokens,
-                output=final_message.usage.output_tokens,
-            )
+            self._apply_response(response, final_message)
         else:
             message = await client.messages.create(**kwargs)
-            if message.content:
-                for block in message.content:
-                    if block.type == "text":
-                        yield block.text
-            response.response_json = message.model_dump()
-            response.set_usage(
-                input=message.usage.input_tokens,
-                output=message.usage.output_tokens,
-            )
+            for text in self._iter_text_blocks(message):
+                yield text
+            self._apply_response(response, message)
 
 
 def get_opencode_models():

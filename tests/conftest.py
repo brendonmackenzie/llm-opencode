@@ -1,8 +1,5 @@
-import os
 import pytest
 from unittest.mock import AsyncMock, MagicMock
-
-from llm_opencode import OpenCodeGoAnthropicAsyncChat, OpenCodeGoAnthropicChat
 
 
 def _filter_headers(headers_to_redact):
@@ -113,27 +110,6 @@ def make_async_stream():
         ctx = AsyncStreamContext()
         return ctx, stream_obj, final_message
     return _make
-
-
-@pytest.fixture(
-    params=[
-        (OpenCodeGoAnthropicChat, "llm_opencode.Anthropic", False),
-        (OpenCodeGoAnthropicAsyncChat, "llm_opencode.AsyncAnthropic", True),
-    ],
-    ids=["sync", "async"],
-)
-def anthropic_chat_pair(request):
-    model_cls, patch_path, is_async = request.param
-    return {
-        "model": model_cls(model_id="opencode-go/minimax-m3"),
-        "patch_path": patch_path,
-        "is_async": is_async,
-    }
-
-
-@pytest.fixture
-def make_stream(anthropic_chat_pair, make_sync_stream, make_async_stream):
-    return make_sync_stream if not anthropic_chat_pair["is_async"] else make_async_stream
 
 
 @pytest.fixture
