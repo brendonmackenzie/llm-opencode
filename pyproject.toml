@@ -7,7 +7,7 @@ include = ["llm_opencode.py"]
 
 [project]
 name = "llm-opencode"
-version = "0.1a1"
+version = "0.1a2"
 description = "LLM plugin for OpenCode Go subscription models"
 readme = "README.md"
 authors = [{name = "Brendon"}]
@@ -29,7 +29,7 @@ Homepage = "https://github.com/brendonmackenzie/llm-opencode"
 opencode = "llm_opencode"
 
 [project.optional-dependencies]
-test = ["pytest", "pytest-recording", "pytest-cov", "inline-snapshot", "pytest-asyncio", "pytest-timeout"]
+test = ["pytest", "pytest-recording", "pytest-cov", "inline-snapshot", "pytest-asyncio", "pytest-timeout", "ty"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
