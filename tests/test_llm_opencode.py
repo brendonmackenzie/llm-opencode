@@ -76,6 +76,13 @@ def test_openai_async_chat_str():
     assert str(model) == "OpenCode Go: opencode-go/test"
 
 
+def test_openai_chat_str():
+    model = OpenCodeGoChat(
+        model_id="opencode-go/test", model_name="test", api_base="https://example.com/v1"
+    )
+    assert str(model) == "OpenCode Go: opencode-go/test"
+
+
 def test_anthropic_chat_str():
     model = OpenCodeGoAnthropicChat(model_id="opencode-go/minimax-m3")
     assert str(model) == "OpenCode Go: opencode-go/minimax-m3"
@@ -426,6 +433,30 @@ def test_register_models_no_key(mock_get_key):
     register.assert_not_called()
 
 
+@patch("llm_opencode.get_opencode_models")
+@patch("llm.get_key", return_value="sk-test")
+def test_register_models_with_valid_key(mock_get_key, mock_get_models):
+    mock_get_models.return_value = [
+        {"id": "glm-5"},
+        {"id": "minimax-m3"},
+    ]
+
+    register = MagicMock()
+    register_models(register)
+
+    assert register.call_count == 2
+
+    openai_args = register.call_args_list[0][0]
+    assert isinstance(openai_args[0], OpenCodeGoChat)
+    assert isinstance(openai_args[1], OpenCodeGoAsyncChat)
+    assert openai_args[0].model_id == "opencode-go/glm-5"
+
+    anthropic_args = register.call_args_list[1][0]
+    assert isinstance(anthropic_args[0], OpenCodeGoAnthropicChat)
+    assert isinstance(anthropic_args[1], OpenCodeGoAnthropicAsyncChat)
+    assert anthropic_args[0].model_id == "opencode-go/minimax-m3"
+
+
 def test_fetch_cached_json_cache_hit(tmp_path):
     cache_file = tmp_path / "cache.json"
     cache_data = {"data": [{"id": "model-1"}]}
@@ -450,6 +481,24 @@ def test_fetch_cached_json_network_fetch(mock_httpx_get, tmp_path):
 
 
 @patch("httpx.get")
+def test_fetch_cached_json_stale_cache_network_success(mock_httpx_get, tmp_path):
+    cache_file = tmp_path / "cache.json"
+    old_data = {"data": [{"id": "old-model"}]}
+    cache_file.write_text(json.dumps(old_data))
+    os.utime(cache_file, (0, 0))
+
+    new_data = {"data": [{"id": "new-model"}]}
+    mock_response = MagicMock()
+    mock_response.json.return_value = new_data
+    mock_response.raise_for_status.return_value = None
+    mock_httpx_get.return_value = mock_response
+
+    result = fetch_cached_json("https://example.com/api", cache_file, 3600)
+    assert result == new_data
+    assert json.loads(cache_file.read_text()) == new_data
+
+
+@patch("httpx.get")
 def test_fetch_cached_json_http_error_with_cache(mock_httpx_get, tmp_path):
     cache_file = tmp_path / "cache.json"
     cache_data = {"data": [{"id": "model-1"}]}
@@ -463,6 +512,19 @@ def test_fetch_cached_json_http_error_with_cache(mock_httpx_get, tmp_path):
 
 
 @patch("httpx.get")
+def test_fetch_cached_json_stale_cache_network_failure(mock_httpx_get, tmp_path):
+    cache_file = tmp_path / "cache.json"
+    stale_data = {"data": [{"id": "stale-model"}]}
+    cache_file.write_text(json.dumps(stale_data))
+    os.utime(cache_file, (0, 0))
+
+    mock_httpx_get.side_effect = httpx.HTTPError("Connection error")
+
+    result = fetch_cached_json("https://example.com/api", cache_file, 3600)
+    assert result == stale_data
+
+
+@patch("httpx.get")
 def test_fetch_cached_json_http_error_no_cache(mock_httpx_get, tmp_path):
     cache_file = tmp_path / "cache.json"
 
@@ -470,6 +532,35 @@ def test_fetch_cached_json_http_error_no_cache(mock_httpx_get, tmp_path):
 
     with pytest.raises(DownloadError):
         fetch_cached_json("https://example.com/api", cache_file, 3600)
+
+
+@patch("httpx.get")
+def test_fetch_cached_json_invalid_json_cache(mock_httpx_get, tmp_path):
+    cache_file = tmp_path / "cache.json"
+    cache_file.write_text("not valid json")
+
+    mock_httpx_get.side_effect = httpx.HTTPError("Connection error")
+
+    with pytest.raises(DownloadError):
+        fetch_cached_json("https://example.com/api", cache_file, 3600)
+
+
+@patch("httpx.get")
+def test_fetch_cached_json_fresh_cache_invalid_json_falls_back_to_network(
+    mock_httpx_get, tmp_path
+):
+    cache_file = tmp_path / "cache.json"
+    cache_file.write_text("not valid json")
+
+    new_data = {"data": [{"id": "new-model"}]}
+    mock_response = MagicMock()
+    mock_response.json.return_value = new_data
+    mock_response.raise_for_status.return_value = None
+    mock_httpx_get.return_value = mock_response
+
+    result = fetch_cached_json("https://example.com/api", cache_file, 3600)
+    assert result == new_data
+    assert json.loads(cache_file.read_text()) == new_data
 
 
 @patch("llm_opencode.get_opencode_models")
