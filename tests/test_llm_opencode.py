@@ -18,11 +18,23 @@ from llm_opencode import (
     register_models,
     _get_protocol,
 )
-
+from tests._fakes import (
+    Conversation,
+    PrevResponse,
+    Prompt,
+    make_async_stream,
+    make_message,
+    make_prompt,
+    make_sync_stream,
+)
+from tests._fakes import (
+    Conversation,
+    PrevResponse,
+    Prompt,
+)
 
 def _get_key():
     return os.environ.get("OPENCODE_KEY", "sk-test")
-
 
 @patch("llm_opencode.get_opencode_models")
 @pytest.mark.vcr
@@ -34,7 +46,6 @@ def test_openai_protocol_prompt(mock_get_models, make_opencode_models):
     assert isinstance(text, str)
     assert len(text) > 0
 
-
 @patch("llm_opencode.get_opencode_models")
 @pytest.mark.vcr
 def test_anthropic_protocol_prompt(mock_get_models, make_opencode_models):
@@ -45,7 +56,6 @@ def test_anthropic_protocol_prompt(mock_get_models, make_opencode_models):
     assert isinstance(text, str)
     assert len(text) > 0
 
-
 @patch("llm_opencode.get_opencode_models")
 @pytest.mark.vcr
 def test_llm_models(mock_get_models, make_opencode_models):
@@ -54,13 +64,11 @@ def test_llm_models(mock_get_models, make_opencode_models):
     result = runner.invoke(cli, ["models", "list"])
     assert result.exit_code == 0, result.output
 
-
 def test_model_registration():
     models = llm.get_models()
     model_ids = [m.model_id for m in models]
     opencode_models = [m for m in model_ids if m.startswith("opencode-go/")]
     assert len(opencode_models) > 0
-
 
 def test_get_protocol():
     assert _get_protocol("glm-5") == "openai"
@@ -72,13 +80,11 @@ def test_get_protocol():
     assert _get_protocol("qwen3.7-max") == "anthropic"
     assert _get_protocol("unknown-model") == "openai"
 
-
 def test_openai_async_chat_str():
     model = OpenCodeGoAsyncChat(
         model_id="opencode-go/test", model_name="test", api_base="https://example.com/v1"
     )
     assert str(model) == "OpenCode Go: opencode-go/test"
-
 
 def test_openai_chat_str():
     model = OpenCodeGoChat(
@@ -86,16 +92,13 @@ def test_openai_chat_str():
     )
     assert str(model) == "OpenCode Go: opencode-go/test"
 
-
 def test_anthropic_chat_str():
     model = OpenCodeGoAnthropicChat(model_id="opencode-go/minimax-m3")
     assert str(model) == "OpenCode Go: opencode-go/minimax-m3"
 
-
 def test_anthropic_async_chat_str():
     model = OpenCodeGoAnthropicAsyncChat(model_id="opencode-go/minimax-m3")
     assert str(model) == "OpenCode Go: opencode-go/minimax-m3"
-
 
 def test_anthropic_chat_custom_model_id():
     model = OpenCodeGoAnthropicChat(
@@ -103,93 +106,61 @@ def test_anthropic_chat_custom_model_id():
     )
     assert model.anthropic_model_id == "custom-model"
 
-
 def test_anthropic_chat_custom_model_id_async():
     model = OpenCodeGoAnthropicAsyncChat(
         model_id="opencode-go/minimax-m3", anthropic_model_id="custom-model"
     )
     assert model.anthropic_model_id == "custom-model"
 
-
 def test_anthropic_chat_default_model_id():
     model = OpenCodeGoAnthropicChat(model_id="opencode-go/minimax-m3")
     assert model.anthropic_model_id == "minimax-m3"
-
 
 def test_anthropic_chat_default_model_id_async():
     model = OpenCodeGoAnthropicAsyncChat(model_id="opencode-go/minimax-m3")
     assert model.anthropic_model_id == "minimax-m3"
 
-
-def test_build_messages_with_conversation():
-    model = OpenCodeGoAnthropicChat(model_id="opencode-go/minimax-m3")
-
-    mock_prev_response = MagicMock()
-    mock_prev_response.prompt.prompt = "Previous question"
-    mock_prev_response.text_or_raise.return_value = "Previous answer"
-
-    mock_conversation = MagicMock()
-    mock_conversation.responses = [mock_prev_response]
-
-    mock_prompt = MagicMock()
-    mock_prompt.prompt = "Current question"
-
-    messages = model._build_messages(mock_prompt, mock_conversation)
+def test_build_messages_with_conversation(anthropic_sync_model):
+    conv = Conversation(
+        responses=[
+            PrevResponse(prompt=Prompt(prompt="Previous question"), text="Previous answer")
+        ]
+    )
+    messages = anthropic_sync_model._build_messages(
+        Prompt(prompt="Current question"), conv
+    )
     assert messages == [
         {"role": "user", "content": "Previous question"},
         {"role": "assistant", "content": "Previous answer"},
         {"role": "user", "content": "Current question"},
     ]
 
-
-def test_build_messages_with_empty_user_content():
-    model = OpenCodeGoAnthropicChat(model_id="opencode-go/minimax-m3")
-
-    mock_prev_response = MagicMock()
-    mock_prev_response.prompt.prompt = ""
-    mock_prev_response.text_or_raise.return_value = "Answer"
-
-    mock_conversation = MagicMock()
-    mock_conversation.responses = [mock_prev_response]
-
-    mock_prompt = MagicMock()
-    mock_prompt.prompt = "New question"
-
-    messages = model._build_messages(mock_prompt, mock_conversation)
+def test_build_messages_with_empty_user_content(anthropic_sync_model):
+    conv = Conversation(
+        responses=[PrevResponse(prompt=Prompt(prompt=""), text="Answer")]
+    )
+    messages = anthropic_sync_model._build_messages(
+        Prompt(prompt="New question"), conv
+    )
     assert messages == [
         {"role": "assistant", "content": "Answer"},
         {"role": "user", "content": "New question"},
     ]
 
-
-def test_build_messages_no_conversation():
-    model = OpenCodeGoAnthropicChat(model_id="opencode-go/minimax-m3")
-
-    mock_prompt = MagicMock()
-    mock_prompt.prompt = "Hello"
-
-    messages = model._build_messages(mock_prompt, None)
+def test_build_messages_no_conversation(anthropic_sync_model):
+    messages = anthropic_sync_model._build_messages(Prompt(prompt="Hello"), None)
     assert messages == [{"role": "user", "content": "Hello"}]
 
-
-def test_build_messages_multi_turn_conversation():
-    model = OpenCodeGoAnthropicChat(model_id="opencode-go/minimax-m3")
-
-    mock_prev1 = MagicMock()
-    mock_prev1.prompt.prompt = "First question"
-    mock_prev1.text_or_raise.return_value = "First answer"
-
-    mock_prev2 = MagicMock()
-    mock_prev2.prompt.prompt = "Second question"
-    mock_prev2.text_or_raise.return_value = "Second answer"
-
-    mock_conversation = MagicMock()
-    mock_conversation.responses = [mock_prev1, mock_prev2]
-
-    mock_prompt = MagicMock()
-    mock_prompt.prompt = "Third question"
-
-    messages = model._build_messages(mock_prompt, mock_conversation)
+def test_build_messages_multi_turn_conversation(anthropic_sync_model):
+    conv = Conversation(
+        responses=[
+            PrevResponse(prompt=Prompt(prompt="First question"), text="First answer"),
+            PrevResponse(prompt=Prompt(prompt="Second question"), text="Second answer"),
+        ]
+    )
+    messages = anthropic_sync_model._build_messages(
+        Prompt(prompt="Third question"), conv
+    )
     assert messages == [
         {"role": "user", "content": "First question"},
         {"role": "assistant", "content": "First answer"},
@@ -198,379 +169,289 @@ def test_build_messages_multi_turn_conversation():
         {"role": "user", "content": "Third question"},
     ]
 
-
-def test_build_messages_with_none_prompt():
-    model = OpenCodeGoAnthropicChat(model_id="opencode-go/minimax-m3")
-
-    mock_prev_response = MagicMock()
-    mock_prev_response.prompt.prompt = "Previous question"
-    mock_prev_response.text_or_raise.return_value = "Previous answer"
-
-    mock_conversation = MagicMock()
-    mock_conversation.responses = [mock_prev_response]
-
-    mock_prompt = MagicMock()
-    mock_prompt.prompt = None
-
-    messages = model._build_messages(mock_prompt, mock_conversation)
+def test_build_messages_with_none_prompt(anthropic_sync_model):
+    conv = Conversation(
+        responses=[
+            PrevResponse(prompt=Prompt(prompt="Previous question"), text="Previous answer")
+        ]
+    )
+    messages = anthropic_sync_model._build_messages(Prompt(prompt=None), conv)
     assert messages == [
         {"role": "user", "content": "Previous question"},
         {"role": "assistant", "content": "Previous answer"},
     ]
 
-
-def test_anthropic_prompt_no_stream(make_message, make_prompt, anthropic_response):
-    model = OpenCodeGoAnthropicChat(model_id="opencode-go/minimax-m3")
-
-    with patch("llm_opencode.Anthropic") as mock_cls:
-        mock_client = MagicMock()
-        mock_client.messages.create.return_value = make_message()
-        mock_cls.return_value = mock_client
-
-        chunks = list(
-            model.execute(
-                make_prompt(),
-                stream=False,
-                response=anthropic_response,
-                conversation=None,
-                key="sk-test",
-            )
-        )
-
-    assert chunks == ["Hello"]
-    anthropic_response.set_usage.assert_called_once_with(input=10, output=5)
-    mock_client.messages.create.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_anthropic_prompt_no_stream_async(
-    make_message, make_prompt, anthropic_response
+def test_anthropic_prompt_no_stream(
+    anthropic_sync_model,
+    mocked_sync_anthropic_client,
+    anthropic_response,
 ):
-    model = OpenCodeGoAnthropicAsyncChat(model_id="opencode-go/minimax-m3")
-
-    with patch("llm_opencode.AsyncAnthropic") as mock_cls:
-        mock_client = AsyncMock()
-        mock_client.messages.create = AsyncMock(return_value=make_message())
-        mock_cls.return_value = mock_client
-
-        chunks = []
-        async for chunk in model.execute(
+    mocked_sync_anthropic_client.messages.create.return_value = make_message()
+    chunks = list(
+        anthropic_sync_model.execute(
             make_prompt(),
             stream=False,
             response=anthropic_response,
             conversation=None,
             key="sk-test",
-        ):
-            chunks.append(chunk)
-
+        )
+    )
     assert chunks == ["Hello"]
     anthropic_response.set_usage.assert_called_once_with(input=10, output=5)
-    mock_client.messages.create.assert_awaited_once()
-
-
-def test_anthropic_prompt_with_system(make_message, make_prompt, anthropic_response):
-    model = OpenCodeGoAnthropicChat(model_id="opencode-go/minimax-m3")
-
-    with patch("llm_opencode.Anthropic") as mock_cls:
-        mock_client = MagicMock()
-        mock_client.messages.create.return_value = make_message()
-        mock_cls.return_value = mock_client
-
-        list(
-            model.execute(
-                make_prompt(system="You are a helpful assistant"),
-                stream=False,
-                response=anthropic_response,
-                conversation=None,
-                key="sk-test",
-            )
-        )
-
-        call_kwargs = mock_client.messages.create.call_args[1]
-        assert call_kwargs["system"] == "You are a helpful assistant"
-
+    mocked_sync_anthropic_client.messages.create.assert_called_once()
 
 @pytest.mark.asyncio
-async def test_anthropic_prompt_with_system_async(
-    make_message, make_prompt, anthropic_response
+async def test_anthropic_prompt_no_stream_async(
+    anthropic_async_model,
+    mocked_async_anthropic_client,
+    anthropic_response,
 ):
-    model = OpenCodeGoAnthropicAsyncChat(model_id="opencode-go/minimax-m3")
+    mocked_async_anthropic_client.messages.create.return_value = make_message()
+    chunks = []
+    async for chunk in anthropic_async_model.execute(
+        make_prompt(),
+        stream=False,
+        response=anthropic_response,
+        conversation=None,
+        key="sk-test",
+    ):
+        chunks.append(chunk)
+    assert chunks == ["Hello"]
+    anthropic_response.set_usage.assert_called_once_with(input=10, output=5)
+    mocked_async_anthropic_client.messages.create.assert_awaited_once()
 
-    with patch("llm_opencode.AsyncAnthropic") as mock_cls:
-        mock_client = AsyncMock()
-        mock_client.messages.create = AsyncMock(return_value=make_message())
-        mock_cls.return_value = mock_client
-
-        async for _ in model.execute(
+def test_anthropic_prompt_with_system(
+    anthropic_sync_model,
+    mocked_sync_anthropic_client,
+    anthropic_response,
+):
+    mocked_sync_anthropic_client.messages.create.return_value = make_message()
+    list(
+        anthropic_sync_model.execute(
             make_prompt(system="You are a helpful assistant"),
             stream=False,
             response=anthropic_response,
             conversation=None,
             key="sk-test",
-        ):
-            pass
-
-        call_kwargs = mock_client.messages.create.call_args[1]
-        assert call_kwargs["system"] == "You are a helpful assistant"
-
-
-def test_anthropic_prompt_with_temperature(
-    make_message, make_prompt, anthropic_response
-):
-    model = OpenCodeGoAnthropicChat(model_id="opencode-go/minimax-m3")
-
-    with patch("llm_opencode.Anthropic") as mock_cls:
-        mock_client = MagicMock()
-        mock_client.messages.create.return_value = make_message()
-        mock_cls.return_value = mock_client
-
-        list(
-            model.execute(
-                make_prompt(max_tokens=2048, temperature=0.5),
-                stream=False,
-                response=anthropic_response,
-                conversation=None,
-                key="sk-test",
-            )
         )
-
-        call_kwargs = mock_client.messages.create.call_args[1]
-        assert call_kwargs["max_tokens"] == 2048
-        assert call_kwargs["temperature"] == 0.5
-
+    )
+    call_kwargs = mocked_sync_anthropic_client.messages.create.call_args[1]
+    assert call_kwargs["system"] == "You are a helpful assistant"
 
 @pytest.mark.asyncio
-async def test_anthropic_prompt_with_temperature_async(
-    make_message, make_prompt, anthropic_response
+async def test_anthropic_prompt_with_system_async(
+    anthropic_async_model,
+    mocked_async_anthropic_client,
+    anthropic_response,
 ):
-    model = OpenCodeGoAnthropicAsyncChat(model_id="opencode-go/minimax-m3")
+    mocked_async_anthropic_client.messages.create.return_value = make_message()
+    async for _ in anthropic_async_model.execute(
+        make_prompt(system="You are a helpful assistant"),
+        stream=False,
+        response=anthropic_response,
+        conversation=None,
+        key="sk-test",
+    ):
+        pass
+    call_kwargs = mocked_async_anthropic_client.messages.create.call_args[1]
+    assert call_kwargs["system"] == "You are a helpful assistant"
 
-    with patch("llm_opencode.AsyncAnthropic") as mock_cls:
-        mock_client = AsyncMock()
-        mock_client.messages.create = AsyncMock(return_value=make_message())
-        mock_cls.return_value = mock_client
-
-        async for _ in model.execute(
+def test_anthropic_prompt_with_temperature(
+    anthropic_sync_model,
+    mocked_sync_anthropic_client,
+    anthropic_response,
+):
+    mocked_sync_anthropic_client.messages.create.return_value = make_message()
+    list(
+        anthropic_sync_model.execute(
             make_prompt(max_tokens=2048, temperature=0.5),
             stream=False,
             response=anthropic_response,
             conversation=None,
             key="sk-test",
-        ):
-            pass
-
-        call_kwargs = mock_client.messages.create.call_args[1]
-        assert call_kwargs["max_tokens"] == 2048
-        assert call_kwargs["temperature"] == 0.5
-
-
-def test_anthropic_prompt_stream(
-    make_sync_stream, make_prompt, anthropic_response
-):
-    model = OpenCodeGoAnthropicChat(model_id="opencode-go/minimax-m3")
-
-    with patch("llm_opencode.Anthropic") as mock_cls:
-        ctx, _stream_obj, _final_message = make_sync_stream()
-        mock_client = MagicMock()
-        mock_client.messages.stream.return_value = ctx
-        mock_cls.return_value = mock_client
-
-        chunks = list(
-            model.execute(
-                make_prompt(),
-                stream=True,
-                response=anthropic_response,
-                conversation=None,
-                key="sk-test",
-            )
         )
-
-    assert chunks == ["Hello", " world"]
-    anthropic_response.set_usage.assert_called_once_with(input=10, output=5)
-
+    )
+    call_kwargs = mocked_sync_anthropic_client.messages.create.call_args[1]
+    assert call_kwargs["max_tokens"] == 2048
+    assert call_kwargs["temperature"] == 0.5
 
 @pytest.mark.asyncio
-async def test_anthropic_prompt_stream_async(
-    make_async_stream, make_prompt, anthropic_response
+async def test_anthropic_prompt_with_temperature_async(
+    anthropic_async_model,
+    mocked_async_anthropic_client,
+    anthropic_response,
 ):
-    model = OpenCodeGoAnthropicAsyncChat(model_id="opencode-go/minimax-m3")
+    mocked_async_anthropic_client.messages.create.return_value = make_message()
+    async for _ in anthropic_async_model.execute(
+        make_prompt(max_tokens=2048, temperature=0.5),
+        stream=False,
+        response=anthropic_response,
+        conversation=None,
+        key="sk-test",
+    ):
+        pass
+    call_kwargs = mocked_async_anthropic_client.messages.create.call_args[1]
+    assert call_kwargs["max_tokens"] == 2048
+    assert call_kwargs["temperature"] == 0.5
 
-    with patch("llm_opencode.AsyncAnthropic") as mock_cls:
-        ctx, _stream_obj, _final_message = make_async_stream()
-        mock_client = AsyncMock()
-        mock_client.messages.stream = MagicMock(return_value=ctx)
-        mock_cls.return_value = mock_client
-
-        chunks = []
-        async for chunk in model.execute(
+def test_anthropic_prompt_stream(
+    anthropic_sync_model,
+    mocked_sync_anthropic_client,
+    anthropic_response,
+):
+    mocked_sync_anthropic_client.messages.stream.return_value = make_sync_stream()
+    chunks = list(
+        anthropic_sync_model.execute(
             make_prompt(),
             stream=True,
             response=anthropic_response,
             conversation=None,
             key="sk-test",
-        ):
-            chunks.append(chunk)
-
+        )
+    )
     assert chunks == ["Hello", " world"]
     anthropic_response.set_usage.assert_called_once_with(input=10, output=5)
 
-
-def test_anthropic_prompt_empty_content(
-    make_message, make_prompt, anthropic_response
+@pytest.mark.asyncio
+async def test_anthropic_prompt_stream_async(
+    anthropic_async_model,
+    mocked_async_anthropic_client,
+    anthropic_response,
 ):
-    model = OpenCodeGoAnthropicChat(model_id="opencode-go/minimax-m3")
-
-    with patch("llm_opencode.Anthropic") as mock_cls:
-        mock_client = MagicMock()
-        mock_client.messages.create.return_value = make_message(content=[])
-        mock_cls.return_value = mock_client
-
-        chunks = list(
-            model.execute(
-                make_prompt(),
-                stream=False,
-                response=anthropic_response,
-                conversation=None,
-                key="sk-test",
-            )
-        )
-
-    assert chunks == []
+    mocked_async_anthropic_client.messages.stream = MagicMock(
+        return_value=make_async_stream()
+    )
+    chunks = []
+    async for chunk in anthropic_async_model.execute(
+        make_prompt(),
+        stream=True,
+        response=anthropic_response,
+        conversation=None,
+        key="sk-test",
+    ):
+        chunks.append(chunk)
+    assert chunks == ["Hello", " world"]
     anthropic_response.set_usage.assert_called_once_with(input=10, output=5)
 
-
-@pytest.mark.asyncio
-async def test_anthropic_prompt_empty_content_async(
-    make_message, make_prompt, anthropic_response
+def test_anthropic_prompt_empty_content(
+    anthropic_sync_model,
+    mocked_sync_anthropic_client,
+    anthropic_response,
 ):
-    model = OpenCodeGoAnthropicAsyncChat(model_id="opencode-go/minimax-m3")
-
-    with patch("llm_opencode.AsyncAnthropic") as mock_cls:
-        mock_client = AsyncMock()
-        mock_client.messages.create = AsyncMock(return_value=make_message(content=[]))
-        mock_cls.return_value = mock_client
-
-        chunks = []
-        async for chunk in model.execute(
+    mocked_sync_anthropic_client.messages.create.return_value = make_message(content=[])
+    chunks = list(
+        anthropic_sync_model.execute(
             make_prompt(),
             stream=False,
             response=anthropic_response,
             conversation=None,
             key="sk-test",
-        ):
-            chunks.append(chunk)
-
+        )
+    )
     assert chunks == []
     anthropic_response.set_usage.assert_called_once_with(input=10, output=5)
-
-
-def test_anthropic_prompt_stream_only_whitespace(
-    make_sync_stream, make_prompt, anthropic_response
-):
-    model = OpenCodeGoAnthropicChat(model_id="opencode-go/minimax-m3")
-
-    with patch("llm_opencode.Anthropic") as mock_cls:
-        ctx, _stream_obj, _final_message = make_sync_stream(
-            text_chunks=("\n\n", "   ", "\t")
-        )
-        mock_client = MagicMock()
-        mock_client.messages.stream.return_value = ctx
-        mock_cls.return_value = mock_client
-
-        chunks = list(
-            model.execute(
-                make_prompt(),
-                stream=True,
-                response=anthropic_response,
-                conversation=None,
-                key="sk-test",
-            )
-        )
-
-    assert chunks == []
-    anthropic_response.set_usage.assert_called_once_with(input=10, output=5)
-
 
 @pytest.mark.asyncio
-async def test_anthropic_prompt_stream_only_whitespace_async(
-    make_async_stream, make_prompt, anthropic_response
+async def test_anthropic_prompt_empty_content_async(
+    anthropic_async_model,
+    mocked_async_anthropic_client,
+    anthropic_response,
 ):
-    model = OpenCodeGoAnthropicAsyncChat(model_id="opencode-go/minimax-m3")
+    mocked_async_anthropic_client.messages.create.return_value = make_message(content=[])
+    chunks = []
+    async for chunk in anthropic_async_model.execute(
+        make_prompt(),
+        stream=False,
+        response=anthropic_response,
+        conversation=None,
+        key="sk-test",
+    ):
+        chunks.append(chunk)
+    assert chunks == []
+    anthropic_response.set_usage.assert_called_once_with(input=10, output=5)
 
-    with patch("llm_opencode.AsyncAnthropic") as mock_cls:
-        ctx, _stream_obj, _final_message = make_async_stream(
-            text_chunks=("\n\n", "   ", "\t")
-        )
-        mock_client = AsyncMock()
-        mock_client.messages.stream = MagicMock(return_value=ctx)
-        mock_cls.return_value = mock_client
-
-        chunks = []
-        async for chunk in model.execute(
+def test_anthropic_prompt_stream_only_whitespace(
+    anthropic_sync_model,
+    mocked_sync_anthropic_client,
+    anthropic_response,
+):
+    mocked_sync_anthropic_client.messages.stream.return_value = make_sync_stream(
+        text_chunks=("\n\n", "   ", "\t")
+    )
+    chunks = list(
+        anthropic_sync_model.execute(
             make_prompt(),
             stream=True,
             response=anthropic_response,
             conversation=None,
             key="sk-test",
-        ):
-            chunks.append(chunk)
-
+        )
+    )
     assert chunks == []
     anthropic_response.set_usage.assert_called_once_with(input=10, output=5)
 
-
-def test_anthropic_prompt_empty_user(make_message, make_prompt, anthropic_response):
-    model = OpenCodeGoAnthropicChat(model_id="opencode-go/minimax-m3")
-
-    with patch("llm_opencode.Anthropic") as mock_cls:
-        mock_client = MagicMock()
-        mock_client.messages.create.return_value = make_message()
-        mock_cls.return_value = mock_client
-
-        list(
-            model.execute(
-                make_prompt(prompt_text=""),
-                stream=False,
-                response=anthropic_response,
-                conversation=None,
-                key="sk-test",
-            )
-        )
-
-        call_kwargs = mock_client.messages.create.call_args[1]
-        assert call_kwargs["messages"] == []
-
-
 @pytest.mark.asyncio
-async def test_anthropic_prompt_empty_user_async(
-    make_message, make_prompt, anthropic_response
+async def test_anthropic_prompt_stream_only_whitespace_async(
+    anthropic_async_model,
+    mocked_async_anthropic_client,
+    anthropic_response,
 ):
-    model = OpenCodeGoAnthropicAsyncChat(model_id="opencode-go/minimax-m3")
+    mocked_async_anthropic_client.messages.stream = MagicMock(
+        return_value=make_async_stream(text_chunks=("\n\n", "   ", "\t"))
+    )
+    chunks = []
+    async for chunk in anthropic_async_model.execute(
+        make_prompt(),
+        stream=True,
+        response=anthropic_response,
+        conversation=None,
+        key="sk-test",
+    ):
+        chunks.append(chunk)
+    assert chunks == []
+    anthropic_response.set_usage.assert_called_once_with(input=10, output=5)
 
-    with patch("llm_opencode.AsyncAnthropic") as mock_cls:
-        mock_client = AsyncMock()
-        mock_client.messages.create = AsyncMock(return_value=make_message())
-        mock_cls.return_value = mock_client
-
-        async for _ in model.execute(
+def test_anthropic_prompt_empty_user(
+    anthropic_sync_model,
+    mocked_sync_anthropic_client,
+    anthropic_response,
+):
+    mocked_sync_anthropic_client.messages.create.return_value = make_message()
+    list(
+        anthropic_sync_model.execute(
             make_prompt(prompt_text=""),
             stream=False,
             response=anthropic_response,
             conversation=None,
             key="sk-test",
-        ):
-            pass
+        )
+    )
+    call_kwargs = mocked_sync_anthropic_client.messages.create.call_args[1]
+    assert call_kwargs["messages"] == []
 
-        call_kwargs = mock_client.messages.create.call_args[1]
-        assert call_kwargs["messages"] == []
-
+@pytest.mark.asyncio
+async def test_anthropic_prompt_empty_user_async(
+    anthropic_async_model,
+    mocked_async_anthropic_client,
+    anthropic_response,
+):
+    mocked_async_anthropic_client.messages.create.return_value = make_message()
+    async for _ in anthropic_async_model.execute(
+        make_prompt(prompt_text=""),
+        stream=False,
+        response=anthropic_response,
+        conversation=None,
+        key="sk-test",
+    ):
+        pass
+    call_kwargs = mocked_async_anthropic_client.messages.create.call_args[1]
+    assert call_kwargs["messages"] == []
 
 @patch("llm.get_key", return_value=None)
 def test_register_models_no_key(mock_get_key):
     register = MagicMock()
     register_models(register)
     register.assert_not_called()
-
 
 @patch("llm_opencode.get_opencode_models")
 @patch("llm.get_key", return_value="sk-test")
@@ -595,7 +476,6 @@ def test_register_models_with_valid_key(mock_get_key, mock_get_models):
     assert isinstance(anthropic_args[1], OpenCodeGoAnthropicAsyncChat)
     assert anthropic_args[0].model_id == "opencode-go/minimax-m3"
 
-
 def test_fetch_cached_json_cache_hit(tmp_path):
     cache_file = tmp_path / "cache.json"
     cache_data = {"data": [{"id": "model-1"}]}
@@ -603,7 +483,6 @@ def test_fetch_cached_json_cache_hit(tmp_path):
 
     result = fetch_cached_json("https://example.com/api", cache_file, 3600)
     assert result == cache_data
-
 
 @patch("httpx.get")
 def test_fetch_cached_json_network_fetch(mock_httpx_get, tmp_path):
@@ -617,7 +496,6 @@ def test_fetch_cached_json_network_fetch(mock_httpx_get, tmp_path):
     result = fetch_cached_json("https://example.com/api", cache_file, 3600)
     assert result == {"data": [{"id": "model-1"}]}
     assert cache_file.exists()
-
 
 @patch("httpx.get")
 def test_fetch_cached_json_stale_cache_network_success(mock_httpx_get, tmp_path):
@@ -636,7 +514,6 @@ def test_fetch_cached_json_stale_cache_network_success(mock_httpx_get, tmp_path)
     assert result == new_data
     assert json.loads(cache_file.read_text()) == new_data
 
-
 @patch("httpx.get")
 def test_fetch_cached_json_http_error_with_cache(mock_httpx_get, tmp_path):
     cache_file = tmp_path / "cache.json"
@@ -648,7 +525,6 @@ def test_fetch_cached_json_http_error_with_cache(mock_httpx_get, tmp_path):
 
     result = fetch_cached_json("https://example.com/api", cache_file, 3600)
     assert result == cache_data
-
 
 @patch("httpx.get")
 def test_fetch_cached_json_stale_cache_network_failure(mock_httpx_get, tmp_path):
@@ -662,7 +538,6 @@ def test_fetch_cached_json_stale_cache_network_failure(mock_httpx_get, tmp_path)
     result = fetch_cached_json("https://example.com/api", cache_file, 3600)
     assert result == stale_data
 
-
 @patch("httpx.get")
 def test_fetch_cached_json_http_error_no_cache(mock_httpx_get, tmp_path):
     cache_file = tmp_path / "cache.json"
@@ -671,7 +546,6 @@ def test_fetch_cached_json_http_error_no_cache(mock_httpx_get, tmp_path):
 
     with pytest.raises(DownloadError):
         fetch_cached_json("https://example.com/api", cache_file, 3600)
-
 
 @patch("httpx.get")
 def test_fetch_cached_json_invalid_json_cache(mock_httpx_get, tmp_path):
@@ -682,7 +556,6 @@ def test_fetch_cached_json_invalid_json_cache(mock_httpx_get, tmp_path):
 
     with pytest.raises(DownloadError):
         fetch_cached_json("https://example.com/api", cache_file, 3600)
-
 
 @patch("httpx.get")
 def test_fetch_cached_json_fresh_cache_invalid_json_falls_back_to_network(
@@ -701,7 +574,6 @@ def test_fetch_cached_json_fresh_cache_invalid_json_falls_back_to_network(
     assert result == new_data
     assert json.loads(cache_file.read_text()) == new_data
 
-
 @patch("llm_opencode.get_opencode_models")
 def test_opencode_models_cli(mock_get_models):
     mock_get_models.return_value = [
@@ -716,7 +588,6 @@ def test_opencode_models_cli(mock_get_models):
     assert "minimax-m3" in result.output
     assert "openai" in result.output
     assert "anthropic" in result.output
-
 
 @patch("llm_opencode.get_opencode_models")
 def test_opencode_models_cli_json(mock_get_models):
