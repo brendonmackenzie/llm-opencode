@@ -289,8 +289,11 @@ def fetch_cached_json(url, path, cache_timeout):
     if path.is_file():
         mod_time = path.stat().st_mtime
         if time.time() - mod_time < cache_timeout:
-            with open(path, "r") as file:
-                return json.load(file)
+            try:
+                with open(path, "r") as file:
+                    return json.load(file)
+            except (json.JSONDecodeError, OSError):
+                pass
 
     try:
         import httpx
@@ -302,8 +305,13 @@ def fetch_cached_json(url, path, cache_timeout):
         return response.json()
     except httpx.HTTPError:
         if path.is_file():
-            with open(path, "r") as file:
-                return json.load(file)
+            try:
+                with open(path, "r") as file:
+                    return json.load(file)
+            except (json.JSONDecodeError, OSError):
+                raise DownloadError(
+                    f"Failed to download data and no valid cache is available at {path}"
+                )
         else:
             raise DownloadError(
                 f"Failed to download data and no cache is available at {path}"
