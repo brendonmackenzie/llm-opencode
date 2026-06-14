@@ -29,7 +29,7 @@ Homepage = "https://github.com/brendonmackenzie/llm-opencode"
 opencode = "llm_opencode"
 
 [project.optional-dependencies]
-test = ["pytest", "pytest-recording", "pytest-cov", "inline-snapshot", "pytest-asyncio", "pytest-timeout"]
+test = ["pytest", "pytest-recording", "pytest-cov", "inline-snapshot", "pytest-asyncio", "pytest-timeout", "ty"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
