@@ -26,8 +26,10 @@ def _get_key():
     return os.environ.get("OPENCODE_KEY", "sk-test")
 
 
+@patch("llm_opencode.get_opencode_models")
 @pytest.mark.vcr
-def test_openai_protocol_prompt():
+def test_openai_protocol_prompt(mock_get_models, make_opencode_models):
+    mock_get_models.return_value = make_opencode_models("deepseek-v4-flash")
     model = llm.get_model("opencode-go/deepseek-v4-flash")
     response = model.prompt("Say hello in one word", key=_get_key())
     text = str(response)
@@ -35,8 +37,10 @@ def test_openai_protocol_prompt():
     assert len(text) > 0
 
 
+@patch("llm_opencode.get_opencode_models")
 @pytest.mark.vcr
-def test_anthropic_protocol_prompt():
+def test_anthropic_protocol_prompt(mock_get_models, make_opencode_models):
+    mock_get_models.return_value = make_opencode_models("minimax-m3")
     model = llm.get_model("opencode-go/minimax-m3")
     response = model.prompt("Say hello in one word", key=_get_key())
     text = str(response)
@@ -44,8 +48,10 @@ def test_anthropic_protocol_prompt():
     assert len(text) > 0
 
 
+@patch("llm_opencode.get_opencode_models")
 @pytest.mark.vcr
-def test_llm_models():
+def test_llm_models(mock_get_models, make_opencode_models):
+    mock_get_models.return_value = make_opencode_models("deepseek-v4-flash", "minimax-m3")
     runner = CliRunner()
     result = runner.invoke(cli, ["models", "list"])
     assert result.exit_code == 0, result.output
