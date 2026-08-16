@@ -53,6 +53,8 @@ def test_register_models_with_valid_key(mock_get_key, mock_get_models):
     assert isinstance(openai_args[0], OpenCodeGoChat)
     assert isinstance(openai_args[1], OpenCodeGoAsyncChat)
     assert openai_args[0].model_id == "opencode-go/glm-5"
+    assert openai_args[0].supports_schema is True
+    assert openai_args[1].supports_schema is True
 
     anthropic_args = register.call_args_list[1][0]
     assert isinstance(anthropic_args[0], OpenCodeGoAnthropicChat)

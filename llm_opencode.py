@@ -448,11 +448,13 @@ def register_models(register):
                     model_id=llm_model_id,
                     model_name=model_id,
                     api_base=BASE_URL_OPENAI,
+                    supports_schema=True,
                 ),
                 OpenCodeGoAsyncChat(
                     model_id=llm_model_id,
                     model_name=model_id,
                     api_base=BASE_URL_OPENAI,
+                    supports_schema=True,
                 ),
             )
         elif protocol == "anthropic":
