@@ -504,9 +504,12 @@ def fetch_cached_json(url, path, cache_timeout):
 
 @llm.hookimpl
 def register_commands(cli):
-    @cli.group()
-    def opencode():
+    @cli.group(invoke_without_command=True)
+    @click.pass_context
+    def opencode(ctx):
         "Commands relating to the llm-opencode plugin"
+        if ctx.invoked_subcommand is None:
+            ctx.invoke(models, json_=False)
 
     @opencode.group(invoke_without_command=True)
     @click.option("json_", "--json", is_flag=True, help="Output as JSON")
@@ -546,8 +549,8 @@ def register_commands(cli):
     @click.option("--model", "model_id", help="Filter by exact model ID")
     @click.option(
         "--sort-by",
-        type=click.Choice(["plan_value", "input", "output", "usage", "name", "model_id"]),
-        default="plan_value",
+        type=click.Choice(["requests", "input", "output", "usage", "name", "model_id"]),
+        default="requests",
         help="Sort order (pricing format always sorts by input price)",
     )
     @click.option("-o", "--output", type=click.Path(), help="Write output to file")
@@ -604,25 +607,15 @@ def _parse_rate_limit(value):
         return 0
 
 
-def _plan_value(model):
-    """Plan value: requests per month per dollar, or None when not computable."""
-    pricing = model.get("pricing", {})
+def _requests_per_month_key(model):
+    """Sort key: highest requests per month first, then cheapest input."""
     rate_limits = model.get("rate_limits", {})
     per_month = _parse_rate_limit(rate_limits.get("per_month", ""))
-    usage = pricing.get("usage")
-    if per_month > 0 and usage:
-        return per_month / usage
-    return None
-
-
-def _plan_value_key(model):
-    """Sort key: best plan value first (requests per dollar), then cheapest input."""
     input_price = model.get("pricing", {}).get("input")
     input_sort = input_price if input_price is not None else float("inf")
-    plan_value = _plan_value(model)
-    if plan_value is not None:
-        return (False, -plan_value, input_sort)
-    return (True, 0.0, input_sort)
+    if per_month > 0:
+        return (False, -per_month, input_sort)
+    return (True, 0, input_sort)
 
 
 def _price_key(model, field):
@@ -643,10 +636,10 @@ def _model_id_key(model):
     return (not model_id, model_id.lower())
 
 
-def sort_models(models, sort_by="plan_value"):
-    """Sort unified models by the given key (default: plan value, best first)."""
+def sort_models(models, sort_by="requests"):
+    """Sort unified models by the given key (default: requests per month, highest first)."""
     keys = {
-        "plan_value": _plan_value_key,
+        "requests": _requests_per_month_key,
         "input": lambda m: _price_key(m, "input"),
         "output": lambda m: _price_key(m, "output"),
         "usage": lambda m: _price_key(m, "usage"),
@@ -672,17 +665,19 @@ def format_unified_table(models):
     def _fmt_price(value):
         return f"${value:.2f}" if value is not None else "—"
 
-    def _fmt_plan_value(value):
-        return f"{value:,.0f} req/$" if value is not None else "—"
+    def _fmt_requests_per_month(value):
+        return f"{value:,}" if value > 0 else "—"
 
     rows = []
     for model in models:
         pricing = model.get("pricing", {})
+        rate_limits = model.get("rate_limits", {})
+        per_month = _parse_rate_limit(rate_limits.get("per_month", ""))
         rows.append(
             [
                 model.get("model_id", "")[:25],
                 model.get("model_name", "")[:20],
-                _fmt_plan_value(_plan_value(model)),
+                _fmt_requests_per_month(per_month),
                 _fmt_price(pricing.get("input")),
                 _fmt_price(pricing.get("output")),
                 _fmt_price(pricing.get("cached_read")),
@@ -693,7 +688,7 @@ def format_unified_table(models):
         )
 
     headers = [
-        "Model ID", "Name", "Plan Value", "Input", "Output",
+        "Model ID", "Name", "Req/Month", "Input", "Output",
         "Cache R", "Cache W", "Usage", "Retention",
     ]
     widths = [
