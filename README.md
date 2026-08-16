@@ -70,6 +70,46 @@ Start an interactive chat:
 llm chat -m opencode-go/glm-5.1
 ```
 
+## Model details
+
+Show rich model metadata (pricing, rate limits, endpoints, and data retention
+policies) merged from the OpenCode Go API and docs:
+
+```bash
+llm opencode models detail                # pricing table (default)
+llm opencode models detail --format json  # full JSON
+llm opencode models detail --format csv   # CSV export
+llm opencode models detail --format pricing  # sorted by input cost
+```
+
+Filter the details:
+
+```bash
+llm opencode models detail --search qwen
+llm opencode models detail --provider anthropic
+llm opencode models detail --model minimax-m3
+llm opencode models detail --format csv -o models.csv
+```
+
+By default, models are sorted by **plan value** (requests per month per dollar —
+best deal first), tie-broken by input price. The `detail` table also shows this
+metric as its **Plan Value** column (e.g. `2,636 req/$`). Change the sort order
+with `--sort-by`:
+
+```bash
+llm opencode models detail                          # best plan value first (default)
+llm opencode models detail --sort-by input          # cheapest per-token first
+llm opencode models detail --sort-by usage          # cheapest plan first
+llm opencode models detail --sort-by name           # alphabetical by display name
+llm opencode models detail --sort-by model_id       # by model ID
+```
+
+The `pricing` format always sorts by input price ascending.
+
+The unified data is cached locally for 24 hours. If the OpenCode docs page
+cannot be fetched, the command prints a message with a link to the docs page
+instead.
+
 ## Available Models
 
 The model list is fetched dynamically from the OpenCode Go API. Run `llm opencode models` for the current list.

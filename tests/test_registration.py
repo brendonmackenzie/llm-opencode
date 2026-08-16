@@ -27,6 +27,17 @@ def test_register_models_no_key(mock_get_key):
 
 @patch("llm_opencode.get_opencode_models")
 @patch("llm.get_key", return_value="sk-test")
+def test_register_models_with_valid_key_empty_models(mock_get_key, mock_get_models):
+    mock_get_models.return_value = []
+
+    register = MagicMock()
+    register_models(register)
+
+    register.assert_not_called()
+
+
+@patch("llm_opencode.get_opencode_models")
+@patch("llm.get_key", return_value="sk-test")
 def test_register_models_with_valid_key(mock_get_key, mock_get_models):
     mock_get_models.return_value = [
         {"id": "glm-5"},

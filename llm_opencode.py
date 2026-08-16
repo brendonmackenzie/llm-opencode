@@ -1,13 +1,16 @@
-import click
+import csv
+import io
 import json
-import llm
+import re
 import time
-from anthropic import Anthropic, AsyncAnthropic
-from llm.default_plugins.openai_models import Chat, AsyncChat
+from html.parser import HTMLParser
 from pathlib import Path
-from pydantic import Field
-from typing import Optional
 
+import click
+import llm
+from anthropic import Anthropic, AsyncAnthropic
+from llm.default_plugins.openai_models import AsyncChat, Chat
+from pydantic import Field
 
 OPENAI_PROTOCOL_MODELS = {
     "glm-5",
@@ -40,6 +43,245 @@ BASE_URL_ANTHROPIC = "https://opencode.ai/zen/go"
 
 MODELS_URL = "https://opencode.ai/zen/go/v1/models"
 
+DOCS_PAGE_URL = "https://opencode.ai/docs/go/"
+
+UNIFIED_MODELS_CACHE_TIMEOUT = 86400  # 24 hours
+
+
+class DocsScrapeError(Exception):
+    pass
+
+
+class _DocsTableParser(HTMLParser):
+    """Parse HTML into a list of tables, each with ``headers`` and ``rows``."""
+
+    def __init__(self):
+        super().__init__()
+        self.tables = []
+        self._table_stack = []
+        self._row = None
+        self._cell = None
+        self._in_headers = False
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "table":
+            self._table_stack.append({"headers": [], "rows": []})
+        elif tag == "thead":
+            self._in_headers = True
+        elif tag == "tbody":
+            self._in_headers = False
+        elif tag == "tr" and self._table_stack and self._row is None:
+            self._row = []
+        elif tag in ("th", "td") and self._row is not None and self._cell is None:
+            self._cell = []
+
+    def handle_endtag(self, tag):
+        if tag == "table":
+            if self._table_stack:
+                self.tables.append(self._table_stack.pop())
+        elif tag == "thead":
+            self._in_headers = False
+        elif tag == "tr":
+            if self._row is not None and self._table_stack:
+                table = self._table_stack[-1]
+                if self._in_headers:
+                    table["headers"].extend(self._row)
+                else:
+                    table["rows"].append(self._row)
+            self._row = None
+        elif tag in ("th", "td") and self._cell is not None:
+            if self._row is not None:
+                self._row.append("".join(self._cell).strip())
+            self._cell = None
+
+    def handle_data(self, data):
+        if self._cell is not None:
+            self._cell.append(data)
+
+
+def parse_html_tables(html):
+    """Parse HTML into a list of tables with ``headers`` and ``rows``."""
+    parser = _DocsTableParser()
+    parser.feed(html)
+    parser.close()
+    return parser.tables
+
+
+def fetch_docs_page():
+    """Fetch the OpenCode Go docs page HTML."""
+    try:
+        import httpx
+
+        response = httpx.get(DOCS_PAGE_URL, follow_redirects=True)
+        response.raise_for_status()
+        return response.text
+    except httpx.HTTPError as error:
+        raise DocsScrapeError(f"Failed to fetch docs page: {error}") from error
+
+
+def _normalize_name(name):
+    """Normalize a model display name for matching against Model ID rows."""
+    return re.sub(r"[\s_-]+", " ", name.lower().strip())
+
+
+def _parse_price(value):
+    """Parse '$2.00' or '15' into a float, or None for '-' or empty."""
+    if not value or value == "-":
+        return None
+    cleaned = re.sub(r"[^\d.]", "", value)
+    try:
+        return float(cleaned)
+    except (ValueError, TypeError):
+        return None
+
+
+def parse_docs_tables(tables):
+    """Parse the docs page tables into model data keyed by model ID.
+
+    Tables are identified by their headers, not their position:
+    - a table with a "Model ID" column maps display names to model IDs
+    - a table with "Input"/"Cached Read" columns holds pricing
+    - a table with "requests per" columns holds rate limits
+    - a table with "Model training"/"Data retention" columns holds policies
+    """
+    docs_data = {}
+    name_to_id = {}
+
+    for table in tables:
+        headers = [h.lower() for h in table["headers"]]
+        if "model id" in headers:
+            for row in table["rows"]:
+                if len(row) >= 2:
+                    name_to_id[_normalize_name(row[0])] = row[1]
+
+    for table in tables:
+        headers = [h.lower() for h in table["headers"]]
+        for row in table["rows"]:
+            if not row:
+                continue
+            model_id = name_to_id.get(_normalize_name(row[0]), row[0])
+            entry = docs_data.setdefault(model_id, {})
+            entry["model_name"] = row[0]
+            if "model id" in headers:
+                if len(row) >= 4:
+                    entry["endpoint"] = row[2]
+                    entry["ai_sdk_package"] = row[3]
+            elif "cached read" in headers:
+                if len(row) >= 6:
+                    entry["pricing"] = {
+                        "input": _parse_price(row[1]),
+                        "output": _parse_price(row[2]),
+                        "cached_read": _parse_price(row[3]),
+                        "cached_write": _parse_price(row[4]),
+                        "usage": _parse_price(row[5]),
+                        "currency": "USD",
+                    }
+            elif any("requests per" in header for header in headers):
+                if len(row) >= 4:
+                    entry["rate_limits"] = {
+                        "per_5_hours": row[1].replace(",", ""),
+                        "per_week": row[2].replace(",", ""),
+                        "per_month": row[3].replace(",", ""),
+                    }
+            elif (
+                "model training" in headers or "data retention" in headers
+            ) and len(row) >= 3:
+                entry["model_training"] = row[1]
+                entry["data_retention"] = row[2]
+
+    for model_id, entry in list(docs_data.items()):
+        variant_name = entry.get("model_name", "")
+        if "(" in variant_name:
+            base_name = variant_name.split("(")[0].strip()
+            base_id = name_to_id.get(_normalize_name(base_name))
+            base_entry = docs_data.get(base_id) if base_id else None
+            if base_entry and base_id != model_id:
+                for field in (
+                    "endpoint",
+                    "ai_sdk_package",
+                    "model_training",
+                    "data_retention",
+                    "rate_limits",
+                ):
+                    if field not in entry and field in base_entry:
+                        entry[field] = base_entry[field]
+
+    return docs_data
+
+
+_DEFAULT_PRICING = {
+    "input": None,
+    "output": None,
+    "cached_read": None,
+    "cached_write": None,
+    "usage": None,
+    "currency": "USD",
+}
+
+_DEFAULT_RATE_LIMITS = {"per_5_hours": "", "per_week": "", "per_month": ""}
+
+
+def _unified_entry(model_id, api_model, docs_entry):
+    return {
+        "model_id": model_id,
+        "model_name": docs_entry.get("model_name", ""),
+        "provider": api_model.get("owned_by", ""),
+        "created": api_model.get("created"),
+        "endpoint": docs_entry.get("endpoint", ""),
+        "ai_sdk_package": docs_entry.get("ai_sdk_package", ""),
+        "model_training": docs_entry.get("model_training", ""),
+        "data_retention": docs_entry.get("data_retention", ""),
+        "pricing": docs_entry.get("pricing", dict(_DEFAULT_PRICING)),
+        "rate_limits": docs_entry.get("rate_limits", dict(_DEFAULT_RATE_LIMITS)),
+    }
+
+
+def merge_model_data(api_models, docs_data):
+    """Merge API model data with docs table data into a unified list."""
+    unified = []
+    for api_model in api_models:
+        model_id = api_model.get("id", "")
+        docs_entry = docs_data.get(model_id, {})
+        unified.append(_unified_entry(model_id, api_model, docs_entry))
+
+    api_ids = {m.get("id", "") for m in api_models}
+    for model_id, docs_entry in docs_data.items():
+        if model_id not in api_ids:
+            unified.append(_unified_entry(model_id, {}, docs_entry))
+
+    return unified
+
+
+def fetch_unified_models():
+    """Fetch API and docs model data, merged into a unified list.
+
+    Results are cached for 24 hours. Raises DocsScrapeError if the docs
+    page cannot be fetched or parsed.
+    """
+    cache_path = llm.user_dir() / "opencode_unified_models.json"
+    if (
+        cache_path.is_file()
+        and time.time() - cache_path.stat().st_mtime < UNIFIED_MODELS_CACHE_TIMEOUT
+    ):
+            try:
+                with open(cache_path) as file:
+                    return json.load(file)
+            except (json.JSONDecodeError, OSError):
+                pass
+
+    api_models = get_opencode_models()
+    tables = parse_html_tables(fetch_docs_page())
+    if not tables:
+        raise DocsScrapeError("No tables found on the OpenCode Go docs page")
+    docs_data = parse_docs_tables(tables)
+    unified = merge_model_data(api_models, docs_data)
+
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(cache_path, "w") as file:
+        json.dump(unified, file)
+
+    return unified
+
 
 class OpenCodeGoChat(Chat):
     needs_key = "opencode"
@@ -70,11 +312,11 @@ class _OpenCodeGoAnthropicChatBase:
         self.attachment_types = set()
 
     class Options(llm.Options):
-        max_tokens: Optional[int] = Field(
+        max_tokens: int | None = Field(
             description="Maximum number of tokens to generate",
             default=None,
         )
-        temperature: Optional[float] = Field(
+        temperature: float | None = Field(
             description="Temperature (0.0-1.0)",
             default=None,
         )
@@ -266,10 +508,13 @@ def register_commands(cli):
     def opencode():
         "Commands relating to the llm-opencode plugin"
 
-    @opencode.command()
+    @opencode.group(invoke_without_command=True)
     @click.option("json_", "--json", is_flag=True, help="Output as JSON")
-    def models(json_):
+    @click.pass_context
+    def models(ctx, json_):
         "List OpenCode Go models"
+        if ctx.invoked_subcommand is not None:
+            return
         all_models = get_opencode_models()
         if json_:
             click.echo(json.dumps(all_models, indent=2))
@@ -286,3 +531,255 @@ def register_commands(cli):
                 click.echo(f"  protocol: {protocol}")
                 click.echo(f"  endpoint: https://opencode.ai/zen/go{endpoint}")
                 click.echo()
+
+    @models.command()
+    @click.option(
+        "--format",
+        "-f",
+        "format_",
+        type=click.Choice(["table", "csv", "pricing", "json"]),
+        default="table",
+        help="Output format",
+    )
+    @click.option("--search", help="Search models by name or ID")
+    @click.option("--provider", help="Filter by provider")
+    @click.option("--model", "model_id", help="Filter by exact model ID")
+    @click.option(
+        "--sort-by",
+        type=click.Choice(["plan_value", "input", "output", "usage", "name", "model_id"]),
+        default="plan_value",
+        help="Sort order (pricing format always sorts by input price)",
+    )
+    @click.option("-o", "--output", type=click.Path(), help="Write output to file")
+    def detail(format_, sort_by, search, provider, model_id, output):
+        "Show detailed model info including pricing, rate limits, and policies"
+        try:
+            unified = fetch_unified_models()
+        except DocsScrapeError:
+            click.echo(
+                "OpenCode Go page scraping failed. Please click here for more details:"
+            )
+            click.echo(DOCS_PAGE_URL)
+            raise click.exceptions.Exit(1)
+
+        if model_id:
+            query = model_id.lower()
+            unified = [m for m in unified if m.get("model_id", "").lower() == query]
+        if provider:
+            query = provider.lower()
+            unified = [m for m in unified if query in m.get("provider", "").lower()]
+        if search:
+            query = search.lower()
+            unified = [
+                m
+                for m in unified
+                if query in m.get("model_id", "").lower()
+                or query in m.get("model_name", "").lower()
+            ]
+
+        formatters = {
+            "table": format_unified_table,
+            "csv": format_unified_csv,
+            "pricing": format_unified_pricing,
+            "json": format_unified_json,
+        }
+        if format_ != "pricing":
+            unified = sort_models(unified, sort_by)
+        result = formatters[format_](unified)
+
+        if output:
+            with open(output, "w", encoding="utf-8") as file:
+                file.write(result)
+        else:
+            click.echo(result)
+
+
+def _parse_rate_limit(value):
+    """Parse a rate limit like '1,080' into an int, or 0 when missing/invalid."""
+    if not value:
+        return 0
+    try:
+        return int(value.replace(",", ""))
+    except (ValueError, TypeError):
+        return 0
+
+
+def _plan_value(model):
+    """Plan value: requests per month per dollar, or None when not computable."""
+    pricing = model.get("pricing", {})
+    rate_limits = model.get("rate_limits", {})
+    per_month = _parse_rate_limit(rate_limits.get("per_month", ""))
+    usage = pricing.get("usage")
+    if per_month > 0 and usage:
+        return per_month / usage
+    return None
+
+
+def _plan_value_key(model):
+    """Sort key: best plan value first (requests per dollar), then cheapest input."""
+    input_price = model.get("pricing", {}).get("input")
+    input_sort = input_price if input_price is not None else float("inf")
+    plan_value = _plan_value(model)
+    if plan_value is not None:
+        return (False, -plan_value, input_sort)
+    return (True, 0.0, input_sort)
+
+
+def _price_key(model, field):
+    """Sort key for a pricing field: ascending, missing values pinned to the end."""
+    value = model.get("pricing", {}).get(field)
+    if value is not None:
+        return (False, value)
+    return (True, 0.0)
+
+
+def _name_key(model):
+    name = model.get("model_name") or ""
+    return (not name, name.lower())
+
+
+def _model_id_key(model):
+    model_id = model.get("model_id") or ""
+    return (not model_id, model_id.lower())
+
+
+def sort_models(models, sort_by="plan_value"):
+    """Sort unified models by the given key (default: plan value, best first)."""
+    keys = {
+        "plan_value": _plan_value_key,
+        "input": lambda m: _price_key(m, "input"),
+        "output": lambda m: _price_key(m, "output"),
+        "usage": lambda m: _price_key(m, "usage"),
+        "name": _name_key,
+        "model_id": _model_id_key,
+    }
+    return sorted(models, key=keys[sort_by])
+
+
+def format_unified_json(models):
+    """Format unified models as JSON with metadata."""
+    meta = {
+        "sources": [MODELS_URL, DOCS_PAGE_URL],
+    }
+    return json.dumps({"count": len(models), "models": models, "meta": meta}, indent=2)
+
+
+def format_unified_table(models):
+    """Format unified models as a pretty pricing table."""
+    if not models:
+        return "No models found."
+
+    def _fmt_price(value):
+        return f"${value:.2f}" if value is not None else "—"
+
+    def _fmt_plan_value(value):
+        return f"{value:,.0f} req/$" if value is not None else "—"
+
+    rows = []
+    for model in models:
+        pricing = model.get("pricing", {})
+        rows.append(
+            [
+                model.get("model_id", "")[:25],
+                model.get("model_name", "")[:20],
+                _fmt_plan_value(_plan_value(model)),
+                _fmt_price(pricing.get("input")),
+                _fmt_price(pricing.get("output")),
+                _fmt_price(pricing.get("cached_read")),
+                _fmt_price(pricing.get("cached_write")),
+                _fmt_price(pricing.get("usage")),
+                model.get("data_retention", "")[:10] or "—",
+            ]
+        )
+
+    headers = [
+        "Model ID", "Name", "Plan Value", "Input", "Output",
+        "Cache R", "Cache W", "Usage", "Retention",
+    ]
+    widths = [
+        max(len(header), max((len(row[i]) for row in rows), default=0))
+        for i, header in enumerate(headers)
+    ]
+
+    lines = []
+    lines.append("  ".join(header.ljust(width) for header, width in zip(headers, widths)))
+    lines.append("  ".join("─" * width for width in widths))
+    for row in rows:
+        lines.append("  ".join(cell.ljust(width) for cell, width in zip(row, widths)))
+    return "\n".join(lines)
+
+
+def format_unified_csv(models):
+    """Format unified models as CSV."""
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(
+        [
+            "model_id",
+            "model_name",
+            "provider",
+            "input_price",
+            "output_price",
+            "cached_read",
+            "cached_write",
+            "usage",
+            "endpoint",
+            "ai_sdk_package",
+            "data_retention",
+            "model_training",
+            "rate_per_5h",
+            "rate_per_week",
+            "rate_per_month",
+        ]
+    )
+    for model in models:
+        pricing = model.get("pricing", {})
+        rate_limits = model.get("rate_limits", {})
+        writer.writerow(
+            [
+                model.get("model_id", ""),
+                model.get("model_name", ""),
+                model.get("provider", ""),
+                pricing.get("input", ""),
+                pricing.get("output", ""),
+                pricing.get("cached_read", ""),
+                pricing.get("cached_write", ""),
+                pricing.get("usage", ""),
+                model.get("endpoint", ""),
+                model.get("ai_sdk_package", ""),
+                model.get("data_retention", ""),
+                model.get("model_training", ""),
+                rate_limits.get("per_5_hours", ""),
+                rate_limits.get("per_week", ""),
+                rate_limits.get("per_month", ""),
+            ]
+        )
+    return buf.getvalue()
+
+
+def format_unified_pricing(models):
+    """Format unified models as a pricing comparison sorted by input cost."""
+    priced = [m for m in models if m.get("pricing", {}).get("input") is not None]
+    priced.sort(key=lambda m: m["pricing"]["input"])
+
+    if not priced:
+        return "No pricing data found."
+
+    lines = ["Pricing Comparison (per 1M tokens)", "═" * 70]
+    for model in priced:
+        pricing = model["pricing"]
+        name = model.get("model_id") or model.get("model_name") or "?"
+        lines.append(f"\n  {name}")
+        lines.append(f"    Input:        ${pricing.get('input') or 0:.2f}")
+        lines.append(f"    Output:       ${pricing.get('output') or 0:.2f}")
+        if pricing.get("cached_read") is not None:
+            lines.append(f"    Cached Read:  ${pricing['cached_read']:.2f}")
+        else:
+            lines.append("    Cached Read:  —")
+        if pricing.get("cached_write") is not None:
+            lines.append(f"    Cached Write: ${pricing['cached_write']:.2f}")
+        else:
+            lines.append("    Cached Write: —")
+        lines.append(f"    Usage:        ${pricing.get('usage') or 0:.2f}")
+        lines.append(f"    Retention:    {model.get('data_retention', '—')}")
+    return "\n".join(lines)
