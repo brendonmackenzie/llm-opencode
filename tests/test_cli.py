@@ -67,16 +67,6 @@ def test_opencode_models_cli_empty_json(mock_get_models):
     assert json.loads(result.output) == []
 
 
-@patch("llm_opencode.get_opencode_models")
-def test_opencode_default_to_models(mock_get_models):
-    mock_get_models.return_value = [{"id": "test-model"}]
-
-    runner = CliRunner()
-    result = runner.invoke(cli, ["opencode"])
-    assert result.exit_code == 0, result.output
-    assert "test-model" in result.output
-
-
 # ─── opencode models detail ──────────────────────────────────────────────────
 
 def _unified_models():
@@ -129,14 +119,14 @@ def test_opencode_models_detail_default_table(mock_fetch):
     assert "Usage" in result.output
     assert "$15.00" in result.output
     assert "$60.00" in result.output
-    assert "Req/Month" in result.output
-    assert "600" in result.output
-    assert "16,000" in result.output
-    assert result.output.index("Req/Month") < result.output.index("Input")
+    assert "Plan Value" in result.output
+    assert "40 req/$" in result.output
+    assert "267 req/$" in result.output
+    assert result.output.index("Plan Value") < result.output.index("Input")
 
 
 @patch("llm_opencode.fetch_unified_models")
-def test_opencode_models_detail_default_sort_requests(mock_fetch):
+def test_opencode_models_detail_default_sort_plan_value(mock_fetch):
     mock_fetch.return_value = _unified_models()
 
     runner = CliRunner()
@@ -166,7 +156,7 @@ def test_opencode_models_detail_sort_by_name(mock_fetch):
 
 
 @patch("llm_opencode.fetch_unified_models")
-def test_opencode_models_detail_requests_missing_pinned_last(mock_fetch):
+def test_opencode_models_detail_plan_value_missing_pinned_last(mock_fetch):
     models = _unified_models()
     models.append(
         {
@@ -194,7 +184,7 @@ def test_opencode_models_detail_requests_missing_pinned_last(mock_fetch):
 
 
 @patch("llm_opencode.fetch_unified_models")
-def test_opencode_models_detail_requests_sort_order(mock_fetch):
+def test_opencode_models_detail_plan_value_tiebreak_input(mock_fetch):
     models = [
         {
             "model_id": "model-a",
@@ -400,37 +390,23 @@ def _model(model_id, name, input_price, usage, per_month):
     }
 
 
-def test_sort_models_requests_default():
+def test_sort_models_plan_value_default():
     models = [
         _model("a", "A", 1.0, 15.0, 300),
         _model("b", "B", 2.0, 60.0, 16000),
         _model("c", "C", 0.5, None, 0),
     ]
-    result = sort_models(models, sort_by="requests")
+    result = sort_models(models)
     assert [m["model_id"] for m in result] == ["b", "a", "c"]
 
 
-def test_sort_models_requests_tiebreak_input():
+def test_sort_models_plan_value_tiebreak_input():
     models = [
-        _model("a", "A", 1.0, 15.0, 4000),
+        _model("a", "A", 1.0, 15.0, 3000),
         _model("b", "B", 0.5, 20.0, 4000),
     ]
-    result = sort_models(models, sort_by="requests")
+    result = sort_models(models)
     assert [m["model_id"] for m in result] == ["b", "a"]
-
-
-def test_sort_models_requests_invalid_rate_limit_pinned_last():
-    models = [
-        _model("a", "A", 1.0, 15.0, 300),
-        {
-            "model_id": "b",
-            "model_name": "B",
-            "pricing": {"input": 0.5, "usage": 15.0},
-            "rate_limits": {"per_month": "not-a-number"},
-        },
-    ]
-    result = sort_models(models, sort_by="requests")
-    assert [m["model_id"] for m in result] == ["a", "b"]
 
 
 def test_sort_models_by_input():
@@ -489,12 +465,25 @@ def test_sort_models_by_model_id():
     assert [m["model_id"] for m in result] == ["a", "b"]
 
 
+def test_sort_models_plan_value_invalid_rate_limit_pinned_last():
+    models = [
+        _model("a", "A", 1.0, 15.0, 300),
+        {
+            "model_id": "b",
+            "model_name": "B",
+            "pricing": {"input": 0.5, "usage": 15.0},
+            "rate_limits": {"per_month": "not-a-number"},
+        },
+    ]
+    result = sort_models(models)
+    assert [m["model_id"] for m in result] == ["a", "b"]
+
 
 def test_sort_models_empty():
     assert sort_models([]) == []
 
 
-def test_format_unified_table_requests_missing_shows_dash():
+def test_format_unified_table_plan_value_missing_shows_dash():
     from llm_opencode import format_unified_table
 
     model = _model("a", "A", 0.5, 15.0, 0)
