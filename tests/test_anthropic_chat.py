@@ -1,8 +1,10 @@
+import uuid
 from unittest.mock import MagicMock
 
 import pytest
 from anthropic import APIConnectionError, AuthenticationError
 
+import llm_opencode
 from llm_opencode import OpenCodeGoAnthropicAsyncChat, OpenCodeGoAnthropicChat
 from tests._fakes import (
     Conversation,
@@ -121,12 +123,13 @@ def test_anthropic_prompt_no_stream(
     anthropic_response,
 ):
     mocked_sync_anthropic_client.messages.create.return_value = make_message()
+    conv = Conversation()
     chunks = list(
         anthropic_sync_model.execute(
             make_prompt(),
             stream=False,
             response=anthropic_response,
-            conversation=None,
+            conversation=conv,
             key="sk-test",
         )
     )
@@ -142,12 +145,13 @@ async def test_anthropic_prompt_no_stream_async(
     anthropic_response,
 ):
     mocked_async_anthropic_client.messages.create.return_value = make_message()
+    conv = Conversation()
     chunks = []
     async for chunk in anthropic_async_model.execute(
         make_prompt(),
         stream=False,
         response=anthropic_response,
-        conversation=None,
+        conversation=conv,
         key="sk-test",
     ):
         chunks.append(chunk)
@@ -162,12 +166,13 @@ def test_anthropic_prompt_with_system(
     anthropic_response,
 ):
     mocked_sync_anthropic_client.messages.create.return_value = make_message()
+    conv = Conversation()
     list(
         anthropic_sync_model.execute(
             make_prompt(system="You are a helpful assistant"),
             stream=False,
             response=anthropic_response,
-            conversation=None,
+            conversation=conv,
             key="sk-test",
         )
     )
@@ -182,11 +187,12 @@ async def test_anthropic_prompt_with_system_async(
     anthropic_response,
 ):
     mocked_async_anthropic_client.messages.create.return_value = make_message()
+    conv = Conversation()
     async for _ in anthropic_async_model.execute(
         make_prompt(system="You are a helpful assistant"),
         stream=False,
         response=anthropic_response,
-        conversation=None,
+        conversation=conv,
         key="sk-test",
     ):
         pass
@@ -200,12 +206,13 @@ def test_anthropic_prompt_with_temperature(
     anthropic_response,
 ):
     mocked_sync_anthropic_client.messages.create.return_value = make_message()
+    conv = Conversation()
     list(
         anthropic_sync_model.execute(
             make_prompt(max_tokens=2048, temperature=0.5),
             stream=False,
             response=anthropic_response,
-            conversation=None,
+            conversation=conv,
             key="sk-test",
         )
     )
@@ -221,11 +228,12 @@ async def test_anthropic_prompt_with_temperature_async(
     anthropic_response,
 ):
     mocked_async_anthropic_client.messages.create.return_value = make_message()
+    conv = Conversation()
     async for _ in anthropic_async_model.execute(
         make_prompt(max_tokens=2048, temperature=0.5),
         stream=False,
         response=anthropic_response,
-        conversation=None,
+        conversation=conv,
         key="sk-test",
     ):
         pass
@@ -240,12 +248,13 @@ def test_anthropic_prompt_stream(
     anthropic_response,
 ):
     mocked_sync_anthropic_client.messages.stream.return_value = make_sync_stream()
+    conv = Conversation()
     chunks = list(
         anthropic_sync_model.execute(
             make_prompt(),
             stream=True,
             response=anthropic_response,
-            conversation=None,
+            conversation=conv,
             key="sk-test",
         )
     )
@@ -262,12 +271,13 @@ async def test_anthropic_prompt_stream_async(
     mocked_async_anthropic_client.messages.stream = MagicMock(
         return_value=make_async_stream()
     )
+    conv = Conversation()
     chunks = []
     async for chunk in anthropic_async_model.execute(
         make_prompt(),
         stream=True,
         response=anthropic_response,
-        conversation=None,
+        conversation=conv,
         key="sk-test",
     ):
         chunks.append(chunk)
@@ -281,12 +291,13 @@ def test_anthropic_prompt_empty_content(
     anthropic_response,
 ):
     mocked_sync_anthropic_client.messages.create.return_value = make_message(content=[])
+    conv = Conversation()
     chunks = list(
         anthropic_sync_model.execute(
             make_prompt(),
             stream=False,
             response=anthropic_response,
-            conversation=None,
+            conversation=conv,
             key="sk-test",
         )
     )
@@ -301,12 +312,13 @@ async def test_anthropic_prompt_empty_content_async(
     anthropic_response,
 ):
     mocked_async_anthropic_client.messages.create.return_value = make_message(content=[])
+    conv = Conversation()
     chunks = []
     async for chunk in anthropic_async_model.execute(
         make_prompt(),
         stream=False,
         response=anthropic_response,
-        conversation=None,
+        conversation=conv,
         key="sk-test",
     ):
         chunks.append(chunk)
@@ -322,12 +334,13 @@ def test_anthropic_prompt_stream_only_whitespace(
     mocked_sync_anthropic_client.messages.stream.return_value = make_sync_stream(
         text_chunks=("\n\n", "   ", "\t")
     )
+    conv = Conversation()
     chunks = list(
         anthropic_sync_model.execute(
             make_prompt(),
             stream=True,
             response=anthropic_response,
-            conversation=None,
+            conversation=conv,
             key="sk-test",
         )
     )
@@ -344,12 +357,13 @@ async def test_anthropic_prompt_stream_only_whitespace_async(
     mocked_async_anthropic_client.messages.stream = MagicMock(
         return_value=make_async_stream(text_chunks=("\n\n", "   ", "\t"))
     )
+    conv = Conversation()
     chunks = []
     async for chunk in anthropic_async_model.execute(
         make_prompt(),
         stream=True,
         response=anthropic_response,
-        conversation=None,
+        conversation=conv,
         key="sk-test",
     ):
         chunks.append(chunk)
@@ -363,12 +377,13 @@ def test_anthropic_prompt_empty_user(
     anthropic_response,
 ):
     mocked_sync_anthropic_client.messages.create.return_value = make_message()
+    conv = Conversation()
     list(
         anthropic_sync_model.execute(
             make_prompt(prompt_text=""),
             stream=False,
             response=anthropic_response,
-            conversation=None,
+            conversation=conv,
             key="sk-test",
         )
     )
@@ -383,11 +398,12 @@ async def test_anthropic_prompt_empty_user_async(
     anthropic_response,
 ):
     mocked_async_anthropic_client.messages.create.return_value = make_message()
+    conv = Conversation()
     async for _ in anthropic_async_model.execute(
         make_prompt(prompt_text=""),
         stream=False,
         response=anthropic_response,
-        conversation=None,
+        conversation=conv,
         key="sk-test",
     ):
         pass
@@ -403,13 +419,14 @@ def test_anthropic_execute_raises_on_auth_error(
     mocked_sync_anthropic_client.messages.create.side_effect = AuthenticationError(
         message="invalid x-api-key", response=MagicMock(), body=None
     )
+    conv = Conversation()
     with pytest.raises(AuthenticationError):
         list(
             anthropic_sync_model.execute(
                 make_prompt(),
                 stream=False,
                 response=anthropic_response,
-                conversation=None,
+                conversation=conv,
                 key="sk-test",
             )
         )
@@ -424,12 +441,13 @@ async def test_anthropic_execute_raises_on_auth_error_async(
     mocked_async_anthropic_client.messages.create.side_effect = AuthenticationError(
         message="invalid x-api-key", response=MagicMock(), body=None
     )
+    conv = Conversation()
     with pytest.raises(AuthenticationError):
         async for _ in anthropic_async_model.execute(
             make_prompt(),
             stream=False,
             response=anthropic_response,
-            conversation=None,
+            conversation=conv,
             key="sk-test",
         ):
             pass
@@ -443,13 +461,14 @@ def test_anthropic_execute_raises_on_network_error(
     mocked_sync_anthropic_client.messages.create.side_effect = APIConnectionError(
         request=MagicMock()
     )
+    conv = Conversation()
     with pytest.raises(APIConnectionError):
         list(
             anthropic_sync_model.execute(
                 make_prompt(),
                 stream=False,
                 response=anthropic_response,
-                conversation=None,
+                conversation=conv,
                 key="sk-test",
             )
         )
@@ -464,12 +483,13 @@ async def test_anthropic_execute_raises_on_network_error_async(
     mocked_async_anthropic_client.messages.create.side_effect = APIConnectionError(
         request=MagicMock()
     )
+    conv = Conversation()
     with pytest.raises(APIConnectionError):
         async for _ in anthropic_async_model.execute(
             make_prompt(),
             stream=False,
             response=anthropic_response,
-            conversation=None,
+            conversation=conv,
             key="sk-test",
         ):
             pass
@@ -483,13 +503,96 @@ def test_anthropic_execute_stream_raises_on_auth_error(
     mocked_sync_anthropic_client.messages.stream.side_effect = AuthenticationError(
         message="invalid x-api-key", response=MagicMock(), body=None
     )
+    conv = Conversation()
     with pytest.raises(AuthenticationError):
         list(
             anthropic_sync_model.execute(
                 make_prompt(),
                 stream=True,
                 response=anthropic_response,
-                conversation=None,
+                conversation=conv,
                 key="sk-test",
             )
         )
+
+
+def test_anthropic_session_header_present(
+    anthropic_sync_model,
+    mocked_sync_anthropic_client,
+    anthropic_response,
+):
+    mocked_sync_anthropic_client.messages.create.return_value = make_message()
+    conv = Conversation(id="my-session-uuid")
+    list(
+        anthropic_sync_model.execute(
+            make_prompt(),
+            stream=False,
+            response=anthropic_response,
+            conversation=conv,
+            key="sk-test",
+        )
+    )
+    call_kwargs = llm_opencode.Anthropic.call_args[1]
+    assert call_kwargs["default_headers"] == {"x-opencode-session": "my-session-uuid"}
+
+
+@pytest.mark.asyncio
+async def test_anthropic_session_header_present_async(
+    anthropic_async_model,
+    mocked_async_anthropic_client,
+    anthropic_response,
+):
+    mocked_async_anthropic_client.messages.create.return_value = make_message()
+    conv = Conversation(id="my-session-uuid")
+    async for _ in anthropic_async_model.execute(
+        make_prompt(),
+        stream=False,
+        response=anthropic_response,
+        conversation=conv,
+        key="sk-test",
+    ):
+        pass
+    call_kwargs = llm_opencode.AsyncAnthropic.call_args[1]
+    assert call_kwargs["default_headers"] == {"x-opencode-session": "my-session-uuid"}
+
+
+def test_anthropic_missing_conversation_generates_uuid(
+    anthropic_sync_model,
+    mocked_sync_anthropic_client,
+    anthropic_response,
+):
+    mocked_sync_anthropic_client.messages.create.return_value = make_message()
+    list(
+        anthropic_sync_model.execute(
+            make_prompt(),
+            stream=False,
+            response=anthropic_response,
+            conversation=None,
+            key="sk-test",
+        )
+    )
+    call_kwargs = llm_opencode.Anthropic.call_args[1]
+    header_value = call_kwargs["default_headers"]["x-opencode-session"]
+    assert header_value is not None
+    uuid.UUID(header_value)
+
+
+@pytest.mark.asyncio
+async def test_anthropic_missing_conversation_generates_uuid_async(
+    anthropic_async_model,
+    mocked_async_anthropic_client,
+    anthropic_response,
+):
+    mocked_async_anthropic_client.messages.create.return_value = make_message()
+    async for _ in anthropic_async_model.execute(
+        make_prompt(),
+        stream=False,
+        response=anthropic_response,
+        conversation=None,
+        key="sk-test",
+    ):
+        pass
+    call_kwargs = llm_opencode.AsyncAnthropic.call_args[1]
+    header_value = call_kwargs["default_headers"]["x-opencode-session"]
+    assert header_value is not None
+    uuid.UUID(header_value)

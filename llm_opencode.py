@@ -1,8 +1,10 @@
+import contextvars
 import csv
 import io
 import json
 import re
 import time
+import uuid
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -283,20 +285,55 @@ def fetch_unified_models():
     return unified
 
 
-class OpenCodeGoChat(Chat):
+_SESSION_ID: contextvars.ContextVar = contextvars.ContextVar(
+    "opencode_session_id", default=None
+)
+
+
+def _resolve_session_id(conversation):
+    if conversation is not None and conversation.id:
+        return conversation.id
+    return str(uuid.uuid4())
+
+
+class _OpenCodeGoOpenAISessionMixin:
+    def build_kwargs(self, prompt, stream):
+        kwargs = super().build_kwargs(prompt, stream)
+        session_id = _SESSION_ID.get()
+        if session_id:
+            kwargs["extra_headers"] = {"x-opencode-session": session_id}
+        return kwargs
+
+
+class OpenCodeGoChat(_OpenCodeGoOpenAISessionMixin, Chat):
     needs_key = "opencode"
     key_env_var = "OPENCODE_KEY"
 
     def __str__(self):
         return f"OpenCode Go: {self.model_id}"
 
+    def execute(self, prompt, stream, response, conversation=None, key=None):
+        token = _SESSION_ID.set(_resolve_session_id(conversation))
+        try:
+            yield from super().execute(prompt, stream, response, conversation, key)
+        finally:
+            _SESSION_ID.reset(token)
 
-class OpenCodeGoAsyncChat(AsyncChat):
+
+class OpenCodeGoAsyncChat(_OpenCodeGoOpenAISessionMixin, AsyncChat):
     needs_key = "opencode"
     key_env_var = "OPENCODE_KEY"
 
     def __str__(self):
         return f"OpenCode Go: {self.model_id}"
+
+    async def execute(self, prompt, stream, response, conversation=None, key=None):
+        token = _SESSION_ID.set(_resolve_session_id(conversation))
+        try:
+            async for chunk in super().execute(prompt, stream, response, conversation, key):
+                yield chunk
+        finally:
+            _SESSION_ID.reset(token)
 
 
 class _OpenCodeGoAnthropicChatBase:
@@ -366,9 +403,11 @@ class _OpenCodeGoAnthropicChatBase:
 
 class OpenCodeGoAnthropicChat(_OpenCodeGoAnthropicChatBase, llm.KeyModel):
     def execute(self, prompt, stream, response, conversation, key):
+        session_id = _resolve_session_id(conversation)
         client = Anthropic(
             api_key=self.get_key(key),
             base_url=BASE_URL_ANTHROPIC,
+            default_headers={"x-opencode-session": session_id},
         )
         kwargs = self._build_kwargs(prompt, conversation)
 
@@ -392,9 +431,11 @@ class OpenCodeGoAnthropicChat(_OpenCodeGoAnthropicChatBase, llm.KeyModel):
 
 class OpenCodeGoAnthropicAsyncChat(_OpenCodeGoAnthropicChatBase, llm.AsyncKeyModel):
     async def execute(self, prompt, stream, response, conversation, key):
+        session_id = _resolve_session_id(conversation)
         client = AsyncAnthropic(
             api_key=self.get_key(key),
             base_url=BASE_URL_ANTHROPIC,
+            default_headers={"x-opencode-session": session_id},
         )
         kwargs = self._build_kwargs(prompt, conversation)
 

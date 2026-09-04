@@ -16,7 +16,8 @@ def _get_key():
 def test_openai_protocol_prompt(mock_get_models, make_opencode_models):
     mock_get_models.return_value = make_opencode_models("deepseek-v4-flash")
     model = llm.get_model("opencode-go/deepseek-v4-flash")
-    response = model.prompt("Say hello in one word", key=_get_key())
+    conversation = model.conversation()
+    response = conversation.prompt("Say hello in one word", key=_get_key())
     text = str(response)
     assert isinstance(text, str)
     assert len(text) > 0
@@ -27,7 +28,8 @@ def test_openai_protocol_prompt(mock_get_models, make_opencode_models):
 def test_anthropic_protocol_prompt(mock_get_models, make_opencode_models):
     mock_get_models.return_value = make_opencode_models("minimax-m3")
     model = llm.get_model("opencode-go/minimax-m3")
-    response = model.prompt("Say hello in one word", key=_get_key())
+    conversation = model.conversation()
+    response = conversation.prompt("Say hello in one word", key=_get_key())
     text = str(response)
     assert isinstance(text, str)
     assert len(text) > 0
