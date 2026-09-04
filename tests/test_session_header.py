@@ -3,10 +3,11 @@ import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import llm
 import pytest
 
 from llm_opencode import OpenCodeGoAsyncChat, OpenCodeGoChat
-from tests._fakes import Conversation, make_prompt
+from tests._fakes import Conversation, _Options
 
 
 def _make_model(async_=False):
@@ -16,6 +17,18 @@ def _make_model(async_=False):
         model_name="deepseek-v4-flash",
         api_base="https://opencode.ai/zen/go/v1",
     )
+
+
+def _make_prompt(model):
+    return llm.Prompt(
+        "Say hello",
+        model=model,
+        options=_Options(max_tokens=None, temperature=None),
+    )
+
+
+def _texts(chunks):
+    return [chunk.chunk if hasattr(chunk, "chunk") else chunk for chunk in chunks]
 
 
 def _completion(content="Hello"):
@@ -39,9 +52,9 @@ def test_openai_session_header_from_conversation():
     conv = Conversation(id="my-session-uuid")
     with patch("openai.OpenAI", return_value=mock_client):
         chunks = list(
-            model.execute(make_prompt(), False, MagicMock(), conv, "sk-test")
+            model.execute(_make_prompt(model), False, MagicMock(), conv, "sk-test")
         )
-    assert chunks == ["Hello"]
+    assert _texts(chunks) == ["Hello"]
     kwargs = mock_client.chat.completions.create.call_args[1]
     assert kwargs["extra_headers"] == {"x-opencode-session": "my-session-uuid"}
 
@@ -67,8 +80,10 @@ def test_openai_session_header_stream():
     mock_client.chat.completions.create.return_value = iter([chunk])
     conv = Conversation(id="my-session-uuid")
     with patch("openai.OpenAI", return_value=mock_client):
-        chunks = list(model.execute(make_prompt(), True, MagicMock(), conv, "sk-test"))
-    assert chunks == ["Hi"]
+        chunks = list(
+            model.execute(_make_prompt(model), True, MagicMock(), conv, "sk-test")
+        )
+    assert _texts(chunks) == ["Hi"]
     kwargs = mock_client.chat.completions.create.call_args[1]
     assert kwargs["extra_headers"] == {"x-opencode-session": "my-session-uuid"}
 
@@ -78,7 +93,7 @@ def test_openai_missing_conversation_generates_uuid():
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _completion()
     with patch("openai.OpenAI", return_value=mock_client):
-        list(model.execute(make_prompt(), False, MagicMock(), None, "sk-test"))
+        list(model.execute(_make_prompt(model), False, MagicMock(), None, "sk-test"))
     header = mock_client.chat.completions.create.call_args[1]["extra_headers"][
         "x-opencode-session"
     ]
@@ -95,10 +110,10 @@ async def test_openai_session_header_from_conversation_async():
         chunks = [
             chunk
             async for chunk in model.execute(
-                make_prompt(), False, MagicMock(), conv, "sk-test"
+                _make_prompt(model), False, MagicMock(), conv, "sk-test"
             )
         ]
-    assert chunks == ["Hello"]
+    assert _texts(chunks) == ["Hello"]
     kwargs = mock_client.chat.completions.create.call_args[1]
     assert kwargs["extra_headers"] == {"x-opencode-session": "my-session-uuid"}
 
@@ -109,7 +124,9 @@ async def test_openai_missing_conversation_generates_uuid_async():
     mock_client = MagicMock()
     mock_client.chat.completions.create = AsyncMock(return_value=_completion())
     with patch("openai.AsyncOpenAI", return_value=mock_client):
-        async for _ in model.execute(make_prompt(), False, MagicMock(), None, "sk-test"):
+        async for _ in model.execute(
+            _make_prompt(model), False, MagicMock(), None, "sk-test"
+        ):
             pass
     header = mock_client.chat.completions.create.call_args[1]["extra_headers"][
         "x-opencode-session"
@@ -132,12 +149,12 @@ async def test_async_interleaved_conversations_keep_separate_sessions():
         return [
             chunk
             async for chunk in model.execute(
-                make_prompt(), False, MagicMock(), conv, "sk-test"
+                _make_prompt(model), False, MagicMock(), conv, "sk-test"
             )
         ]
 
     with patch("openai.AsyncOpenAI", return_value=mock_client):
         results = await asyncio.gather(run("session-aaa"), run("session-bbb"))
 
-    assert results[0] == ["session-aaa"]
-    assert results[1] == ["session-bbb"]
+    assert _texts(results[0]) == ["session-aaa"]
+    assert _texts(results[1]) == ["session-bbb"]
