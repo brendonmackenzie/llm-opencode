@@ -296,21 +296,19 @@ def _resolve_session_id(conversation):
     return str(uuid.uuid4())
 
 
-class _OpenCodeGoOpenAISessionMixin:
+class OpenCodeGoChat(Chat):
+    needs_key = "opencode"
+    key_env_var = "OPENCODE_KEY"
+
+    def __str__(self):
+        return f"OpenCode Go: {self.model_id}"
+
     def build_kwargs(self, prompt, stream):
         kwargs = super().build_kwargs(prompt, stream)
         session_id = _SESSION_ID.get()
         if session_id:
             kwargs["extra_headers"] = {"x-opencode-session": session_id}
         return kwargs
-
-
-class OpenCodeGoChat(_OpenCodeGoOpenAISessionMixin, Chat):
-    needs_key = "opencode"
-    key_env_var = "OPENCODE_KEY"
-
-    def __str__(self):
-        return f"OpenCode Go: {self.model_id}"
 
     def execute(self, prompt, stream, response, conversation=None, key=None):
         token = _SESSION_ID.set(_resolve_session_id(conversation))
@@ -320,12 +318,19 @@ class OpenCodeGoChat(_OpenCodeGoOpenAISessionMixin, Chat):
             _SESSION_ID.reset(token)
 
 
-class OpenCodeGoAsyncChat(_OpenCodeGoOpenAISessionMixin, AsyncChat):
+class OpenCodeGoAsyncChat(AsyncChat):
     needs_key = "opencode"
     key_env_var = "OPENCODE_KEY"
 
     def __str__(self):
         return f"OpenCode Go: {self.model_id}"
+
+    def build_kwargs(self, prompt, stream):
+        kwargs = super().build_kwargs(prompt, stream)
+        session_id = _SESSION_ID.get()
+        if session_id:
+            kwargs["extra_headers"] = {"x-opencode-session": session_id}
+        return kwargs
 
     async def execute(self, prompt, stream, response, conversation=None, key=None):
         token = _SESSION_ID.set(_resolve_session_id(conversation))

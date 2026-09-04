@@ -4,7 +4,6 @@ from unittest.mock import MagicMock
 import pytest
 from anthropic import APIConnectionError, AuthenticationError
 
-import llm_opencode
 from llm_opencode import OpenCodeGoAnthropicAsyncChat, OpenCodeGoAnthropicChat
 from tests._fakes import (
     Conversation,
@@ -519,6 +518,7 @@ def test_anthropic_execute_stream_raises_on_auth_error(
 def test_anthropic_session_header_present(
     anthropic_sync_model,
     mocked_sync_anthropic_client,
+    mocked_sync_anthropic_cls,
     anthropic_response,
 ):
     mocked_sync_anthropic_client.messages.create.return_value = make_message()
@@ -532,7 +532,7 @@ def test_anthropic_session_header_present(
             key="sk-test",
         )
     )
-    call_kwargs = llm_opencode.Anthropic.call_args[1]
+    call_kwargs = mocked_sync_anthropic_cls.call_args[1]
     assert call_kwargs["default_headers"] == {"x-opencode-session": "my-session-uuid"}
 
 
@@ -540,6 +540,7 @@ def test_anthropic_session_header_present(
 async def test_anthropic_session_header_present_async(
     anthropic_async_model,
     mocked_async_anthropic_client,
+    mocked_async_anthropic_cls,
     anthropic_response,
 ):
     mocked_async_anthropic_client.messages.create.return_value = make_message()
@@ -552,13 +553,14 @@ async def test_anthropic_session_header_present_async(
         key="sk-test",
     ):
         pass
-    call_kwargs = llm_opencode.AsyncAnthropic.call_args[1]
+    call_kwargs = mocked_async_anthropic_cls.call_args[1]
     assert call_kwargs["default_headers"] == {"x-opencode-session": "my-session-uuid"}
 
 
 def test_anthropic_missing_conversation_generates_uuid(
     anthropic_sync_model,
     mocked_sync_anthropic_client,
+    mocked_sync_anthropic_cls,
     anthropic_response,
 ):
     mocked_sync_anthropic_client.messages.create.return_value = make_message()
@@ -571,7 +573,7 @@ def test_anthropic_missing_conversation_generates_uuid(
             key="sk-test",
         )
     )
-    call_kwargs = llm_opencode.Anthropic.call_args[1]
+    call_kwargs = mocked_sync_anthropic_cls.call_args[1]
     header_value = call_kwargs["default_headers"]["x-opencode-session"]
     assert header_value is not None
     uuid.UUID(header_value)
@@ -581,6 +583,7 @@ def test_anthropic_missing_conversation_generates_uuid(
 async def test_anthropic_missing_conversation_generates_uuid_async(
     anthropic_async_model,
     mocked_async_anthropic_client,
+    mocked_async_anthropic_cls,
     anthropic_response,
 ):
     mocked_async_anthropic_client.messages.create.return_value = make_message()
@@ -592,7 +595,7 @@ async def test_anthropic_missing_conversation_generates_uuid_async(
         key="sk-test",
     ):
         pass
-    call_kwargs = llm_opencode.AsyncAnthropic.call_args[1]
+    call_kwargs = mocked_async_anthropic_cls.call_args[1]
     header_value = call_kwargs["default_headers"]["x-opencode-session"]
     assert header_value is not None
     uuid.UUID(header_value)
