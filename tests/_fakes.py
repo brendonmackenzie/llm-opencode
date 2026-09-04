@@ -33,20 +33,39 @@ def make_message(text="Hello", input_tokens=10, output_tokens=5, content=None):
     )
 
 
+class _Options(dict):
+    def __getattr__(self, name):
+        try:
+            return self[name]
+        except KeyError:
+            raise AttributeError(name)
+
+    def __iter__(self):
+        return iter(self.items())
+
+
+def _make_options(max_tokens=None, temperature=None):
+    return _Options(max_tokens=max_tokens, temperature=temperature)
+
+
 @dataclass
 class Prompt:
     prompt: Optional[str] = None
     system: Optional[str] = None
-    options: SimpleNamespace = field(
-        default_factory=lambda: SimpleNamespace(max_tokens=None, temperature=None)
+    options: _Options = field(
+        default_factory=lambda: _make_options(max_tokens=None, temperature=None)
     )
+    tool_results: list = field(default_factory=list)
+    attachments: list = field(default_factory=list)
+    schema: Optional[dict] = None
+    tools: list = field(default_factory=list)
 
 
 def make_prompt(prompt_text="Say hello", system=None, max_tokens=None, temperature=None):
     return Prompt(
         prompt=prompt_text,
         system=system,
-        options=SimpleNamespace(max_tokens=max_tokens, temperature=temperature),
+        options=_make_options(max_tokens=max_tokens, temperature=temperature),
     )
 
 
@@ -61,6 +80,7 @@ class PrevResponse:
 
 @dataclass
 class Conversation:
+    id: str = "test-conversation-id-12345"
     responses: list = field(default_factory=list)
 
 

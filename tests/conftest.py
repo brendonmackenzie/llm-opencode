@@ -31,19 +31,29 @@ def anthropic_async_model():
 
 
 @pytest.fixture
-def mocked_sync_anthropic_client():
+def mocked_sync_anthropic_cls():
     with patch("llm_opencode.Anthropic") as mock_cls:
-        mock_client = MagicMock()
-        mock_cls.return_value = mock_client
-        yield mock_client
+        yield mock_cls
 
 
 @pytest.fixture
-def mocked_async_anthropic_client():
+def mocked_sync_anthropic_client(mocked_sync_anthropic_cls):
+    mock_client = MagicMock()
+    mocked_sync_anthropic_cls.return_value = mock_client
+    yield mock_client
+
+
+@pytest.fixture
+def mocked_async_anthropic_cls():
     with patch("llm_opencode.AsyncAnthropic") as mock_cls:
-        mock_client = AsyncMock()
-        mock_cls.return_value = mock_client
-        yield mock_client
+        yield mock_cls
+
+
+@pytest.fixture
+def mocked_async_anthropic_client(mocked_async_anthropic_cls):
+    mock_client = AsyncMock()
+    mocked_async_anthropic_cls.return_value = mock_client
+    yield mock_client
 
 
 @pytest.fixture
