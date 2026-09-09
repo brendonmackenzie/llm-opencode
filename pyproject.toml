@@ -7,17 +7,18 @@ include = ["llm_opencode.py"]
 
 [project]
 name = "llm-opencode"
-version = "0.1a4"
+version = "0.1a5"
 description = "LLM plugin for OpenCode Go subscription models"
 readme = "README.md"
 authors = [{name = "Brendon"}]
 license = {text = "Apache-2.0"}
+requires-python = ">=3.10"
 classifiers = [
     "License :: OSI Approved :: Apache Software License"
 ]
 dependencies = [
     "llm>=0.27.1",
-    "httpx",
+    "httpx2>=2.12.0",
     "openai>=1.57.0",
     "anthropic",
 ]

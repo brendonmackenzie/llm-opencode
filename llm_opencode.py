@@ -112,12 +112,12 @@ def parse_html_tables(html):
 def fetch_docs_page():
     """Fetch the OpenCode Go docs page HTML."""
     try:
-        import httpx
+        import httpx2
 
-        response = httpx.get(DOCS_PAGE_URL, follow_redirects=True)
+        response = httpx2.get(DOCS_PAGE_URL, follow_redirects=True)
         response.raise_for_status()
         return response.text
-    except httpx.HTTPError as error:
+    except httpx2.HTTPError as error:
         raise DocsScrapeError(f"Failed to fetch docs page: {error}") from error
 
 
@@ -526,14 +526,14 @@ def fetch_cached_json(url, path, cache_timeout):
                 pass
 
     try:
-        import httpx
+        import httpx2
 
-        response = httpx.get(url, follow_redirects=True)
+        response = httpx2.get(url, follow_redirects=True)
         response.raise_for_status()
         with open(path, "w") as file:
             json.dump(response.json(), file)
         return response.json()
-    except httpx.HTTPError:
+    except httpx2.HTTPError:
         if path.is_file():
             try:
                 with open(path, "r") as file:
