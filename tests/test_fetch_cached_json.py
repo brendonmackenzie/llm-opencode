@@ -3,7 +3,7 @@ import json
 import os
 from unittest.mock import MagicMock, patch
 
-import httpx
+import httpx2
 import pytest
 
 from llm_opencode import DownloadError, fetch_cached_json
@@ -18,7 +18,7 @@ def test_fetch_cached_json_cache_hit(tmp_path):
     assert result == cache_data
 
 
-@patch("httpx.get")
+@patch("httpx2.get")
 def test_fetch_cached_json_network_fetch(mock_httpx_get, tmp_path):
     mock_response = MagicMock()
     mock_response.json.return_value = {"data": [{"id": "model-1"}]}
@@ -32,7 +32,7 @@ def test_fetch_cached_json_network_fetch(mock_httpx_get, tmp_path):
     assert cache_file.exists()
 
 
-@patch("httpx.get")
+@patch("httpx2.get")
 def test_fetch_cached_json_stale_cache_network_success(mock_httpx_get, tmp_path):
     cache_file = tmp_path / "cache.json"
     old_data = {"data": [{"id": "old-model"}]}
@@ -50,54 +50,54 @@ def test_fetch_cached_json_stale_cache_network_success(mock_httpx_get, tmp_path)
     assert json.loads(cache_file.read_text()) == new_data
 
 
-@patch("httpx.get")
+@patch("httpx2.get")
 def test_fetch_cached_json_http_error_with_cache(mock_httpx_get, tmp_path):
     cache_file = tmp_path / "cache.json"
     cache_data = {"data": [{"id": "model-1"}]}
     cache_file.write_text(json.dumps(cache_data))
     os.utime(cache_file, (0, 0))
 
-    mock_httpx_get.side_effect = httpx.HTTPError("Connection error")
+    mock_httpx_get.side_effect = httpx2.HTTPError("Connection error")
 
     result = fetch_cached_json("https://example.com/api", cache_file, 3600)
     assert result == cache_data
 
 
-@patch("httpx.get")
+@patch("httpx2.get")
 def test_fetch_cached_json_stale_cache_network_failure(mock_httpx_get, tmp_path):
     cache_file = tmp_path / "cache.json"
     stale_data = {"data": [{"id": "stale-model"}]}
     cache_file.write_text(json.dumps(stale_data))
     os.utime(cache_file, (0, 0))
 
-    mock_httpx_get.side_effect = httpx.HTTPError("Connection error")
+    mock_httpx_get.side_effect = httpx2.HTTPError("Connection error")
 
     result = fetch_cached_json("https://example.com/api", cache_file, 3600)
     assert result == stale_data
 
 
-@patch("httpx.get")
+@patch("httpx2.get")
 def test_fetch_cached_json_http_error_no_cache(mock_httpx_get, tmp_path):
     cache_file = tmp_path / "cache.json"
 
-    mock_httpx_get.side_effect = httpx.HTTPError("Connection error")
+    mock_httpx_get.side_effect = httpx2.HTTPError("Connection error")
 
     with pytest.raises(DownloadError):
         fetch_cached_json("https://example.com/api", cache_file, 3600)
 
 
-@patch("httpx.get")
+@patch("httpx2.get")
 def test_fetch_cached_json_invalid_json_cache(mock_httpx_get, tmp_path):
     cache_file = tmp_path / "cache.json"
     cache_file.write_text("not valid json")
 
-    mock_httpx_get.side_effect = httpx.HTTPError("Connection error")
+    mock_httpx_get.side_effect = httpx2.HTTPError("Connection error")
 
     with pytest.raises(DownloadError):
         fetch_cached_json("https://example.com/api", cache_file, 3600)
 
 
-@patch("httpx.get")
+@patch("httpx2.get")
 def test_fetch_cached_json_fresh_cache_invalid_json_falls_back_to_network(
     mock_httpx_get, tmp_path
 ):
@@ -115,7 +115,7 @@ def test_fetch_cached_json_fresh_cache_invalid_json_falls_back_to_network(
     assert json.loads(cache_file.read_text()) == new_data
 
 
-@patch("httpx.get")
+@patch("httpx2.get")
 def test_fetch_cached_json_fresh_cache_oserror_falls_back_to_network(
     mock_httpx_get, tmp_path
 ):
@@ -143,7 +143,7 @@ def test_fetch_cached_json_fresh_cache_oserror_falls_back_to_network(
     assert json.loads(cache_file.read_text()) == new_data
 
 
-@patch("httpx.get")
+@patch("httpx2.get")
 def test_fetch_cached_json_stale_cache_oserror_raises_download_error(
     mock_httpx_get, tmp_path
 ):
@@ -151,7 +151,7 @@ def test_fetch_cached_json_stale_cache_oserror_raises_download_error(
     cache_file.write_text(json.dumps({"data": [{"id": "stale"}]}))
     os.utime(cache_file, (0, 0))
 
-    mock_httpx_get.side_effect = httpx.HTTPError("Connection error")
+    mock_httpx_get.side_effect = httpx2.HTTPError("Connection error")
 
     real_open = builtins.open
 

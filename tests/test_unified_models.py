@@ -68,7 +68,7 @@ def _docs_html():
 # ─── fetch_docs_page ─────────────────────────────────────────────────────────
 
 def test_fetch_docs_page_returns_text():
-    with patch("httpx.get") as mock_get:
+    with patch("httpx2.get") as mock_get:
         mock_response = mock_get.return_value
         mock_response.text = "<html>docs</html>"
         mock_response.raise_for_status.return_value = None
@@ -80,10 +80,10 @@ def test_fetch_docs_page_returns_text():
 
 
 def test_fetch_docs_page_http_error_raises_docs_scrape_error():
-    import httpx
+    import httpx2
 
     with (
-        patch("httpx.get", side_effect=httpx.HTTPError("boom")),
+        patch("httpx2.get", side_effect=httpx2.HTTPError("boom")),
         pytest.raises(DocsScrapeError),
     ):
         fetch_docs_page()
