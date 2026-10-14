@@ -11,21 +11,50 @@ from pathlib import Path
 import click
 import llm
 from anthropic import Anthropic, AsyncAnthropic
-from llm.default_plugins.openai_models import AsyncChat, Chat
+from llm.default_plugins.openai_models import (
+    AsyncChat,
+    AsyncResponses,
+    Chat,
+    Responses,
+)
 from pydantic import Field
 
 OPENAI_PROTOCOL_MODELS = {
     "glm-5",
     "glm-5.1",
+    "glm-5.2",
+    "glm-5.3",
+    "glm-5.3-flash",
     "kimi-k2.5",
     "kimi-k2.6",
+    "kimi-k2.7-code",
+    "kimi-k3",
     "mimo-v2",
     "mimo-v2-pro",
     "mimo-v2.5",
     "mimo-v2.5-pro",
+    "mimo-v2.6-flash",
+    "mimo-v2.6-pro",
     "mimo-v2-omni",
     "deepseek-v4-pro",
     "deepseek-v4-flash",
+    "deepseek-v4-flash-vision-exp",
+    "deepseek-v4.1-flash",
+    "deepseek-flash",
+    "hy3",
+    "hy4-preview",
+    "longcat-2.0",
+    "longcat-2.5-preview-free",
+    "space-bunny",
+}
+
+OPENAI_RESPONSES_PROTOCOL_MODELS = {
+    "gpt-5.6-luna",
+    "gpt-6-luna",
+    "grok-4.6",
+    "grok-4.7",
+    "muse-spark-1.2-contributor",
+    "muse-spark-1.3-contributor",
 }
 
 ANTHROPIC_PROTOCOL_MODELS = {
@@ -36,6 +65,9 @@ ANTHROPIC_PROTOCOL_MODELS = {
     "qwen3.6-plus",
     "qwen3.7-plus",
     "qwen3.7-max",
+    "qwen3.8-max",
+    "qwen3.8-flash",
+    "claude-haiku-5-5",
 }
 
 UNKNOWN_MODELS_DEFAULT = "openai"
@@ -341,6 +373,65 @@ class OpenCodeGoAsyncChat(AsyncChat):
             _SESSION_ID.reset(token)
 
 
+class OpenCodeGoResponsesChat(Responses):
+    needs_key = "opencode"
+    key_env_var = "OPENCODE_KEY"
+
+    def __str__(self):
+        return f"OpenCode Go: {self.model_id}"
+
+    def get_client(self, key, *, async_=False):
+        session_id = _SESSION_ID.get()
+        if not session_id:
+            return super().get_client(key, async_=async_)
+        original_headers = self.headers
+        try:
+            self.headers = {
+                **(original_headers or {}),
+                "x-opencode-session": session_id,
+            }
+            return super().get_client(key, async_=async_)
+        finally:
+            self.headers = original_headers
+
+    def execute(self, prompt, stream, response, conversation=None, key=None):
+        token = _SESSION_ID.set(_resolve_session_id(conversation))
+        try:
+            yield from super().execute(prompt, stream, response, conversation, key)
+        finally:
+            _SESSION_ID.reset(token)
+
+
+class OpenCodeGoResponsesAsyncChat(AsyncResponses):
+    needs_key = "opencode"
+    key_env_var = "OPENCODE_KEY"
+
+    def __str__(self):
+        return f"OpenCode Go: {self.model_id}"
+
+    def get_client(self, key, *, async_=False):
+        session_id = _SESSION_ID.get()
+        if not session_id:
+            return super().get_client(key, async_=async_)
+        original_headers = self.headers
+        try:
+            self.headers = {
+                **(original_headers or {}),
+                "x-opencode-session": session_id,
+            }
+            return super().get_client(key, async_=async_)
+        finally:
+            self.headers = original_headers
+
+    async def execute(self, prompt, stream, response, conversation=None, key=None):
+        token = _SESSION_ID.set(_resolve_session_id(conversation))
+        try:
+            async for chunk in super().execute(prompt, stream, response, conversation, key):
+                yield chunk
+        finally:
+            _SESSION_ID.reset(token)
+
+
 class _OpenCodeGoAnthropicChatBase:
     needs_key = "opencode"
     key_env_var = "OPENCODE_KEY"
@@ -475,6 +566,8 @@ def get_opencode_models():
 def _get_protocol(model_id):
     if model_id in ANTHROPIC_PROTOCOL_MODELS:
         return "anthropic"
+    if model_id in OPENAI_RESPONSES_PROTOCOL_MODELS:
+        return "openai-responses"
     return "openai"
 
 
@@ -496,6 +589,19 @@ def register_models(register):
                     api_base=BASE_URL_OPENAI,
                 ),
                 OpenCodeGoAsyncChat(
+                    model_id=llm_model_id,
+                    model_name=model_id,
+                    api_base=BASE_URL_OPENAI,
+                ),
+            )
+        elif protocol == "openai-responses":
+            register(
+                OpenCodeGoResponsesChat(
+                    model_id=llm_model_id,
+                    model_name=model_id,
+                    api_base=BASE_URL_OPENAI,
+                ),
+                OpenCodeGoResponsesAsyncChat(
                     model_id=llm_model_id,
                     model_name=model_id,
                     api_base=BASE_URL_OPENAI,
@@ -574,6 +680,8 @@ def register_commands(cli):
                 endpoint = (
                     "/v1/chat/completions"
                     if protocol == "openai"
+                    else "/v1/responses"
+                    if protocol == "openai-responses"
                     else "/v1/messages"
                 )
                 click.echo(f"- id: {model_id}")

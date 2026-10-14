@@ -7,6 +7,8 @@ from llm_opencode import (
     OpenCodeGoAnthropicChat,
     OpenCodeGoAsyncChat,
     OpenCodeGoChat,
+    OpenCodeGoResponsesAsyncChat,
+    OpenCodeGoResponsesChat,
     register_models,
 )
 
@@ -58,6 +60,38 @@ def test_register_models_with_valid_key(mock_get_key, mock_get_models):
     assert isinstance(anthropic_args[0], OpenCodeGoAnthropicChat)
     assert isinstance(anthropic_args[1], OpenCodeGoAnthropicAsyncChat)
     assert anthropic_args[0].model_id == "opencode-go/minimax-m3"
+
+
+@patch("llm_opencode.get_opencode_models")
+@patch("llm.get_key", return_value="sk-test")
+def test_register_models_with_valid_key_three_protocols(
+    mock_get_key, mock_get_models
+):
+    mock_get_models.return_value = [
+        {"id": "glm-5"},
+        {"id": "minimax-m3"},
+        {"id": "gpt-6-luna"},
+    ]
+
+    register = MagicMock()
+    register_models(register)
+
+    assert register.call_count == 3
+
+    openai_args = register.call_args_list[0][0]
+    assert isinstance(openai_args[0], OpenCodeGoChat)
+    assert isinstance(openai_args[1], OpenCodeGoAsyncChat)
+    assert openai_args[0].model_id == "opencode-go/glm-5"
+
+    anthropic_args = register.call_args_list[1][0]
+    assert isinstance(anthropic_args[0], OpenCodeGoAnthropicChat)
+    assert isinstance(anthropic_args[1], OpenCodeGoAnthropicAsyncChat)
+    assert anthropic_args[0].model_id == "opencode-go/minimax-m3"
+
+    responses_args = register.call_args_list[2][0]
+    assert isinstance(responses_args[0], OpenCodeGoResponsesChat)
+    assert isinstance(responses_args[1], OpenCodeGoResponsesAsyncChat)
+    assert responses_args[0].model_id == "opencode-go/gpt-6-luna"
 
 
 def test_openai_chat_str():
