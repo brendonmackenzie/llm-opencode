@@ -38,7 +38,7 @@ class _Options(dict):
         try:
             return self[name]
         except KeyError:
-            raise AttributeError(name)
+            return None
 
     def __iter__(self):
         return iter(self.items())

@@ -6,7 +6,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import llm
 import pytest
 
-from llm_opencode import OpenCodeGoAsyncChat, OpenCodeGoChat
+from llm_opencode import (
+    OpenCodeGoAsyncChat,
+    OpenCodeGoChat,
+    OpenCodeGoResponsesAsyncChat,
+    OpenCodeGoResponsesChat,
+)
 from tests._fakes import Conversation, _Options
 
 
@@ -15,6 +20,15 @@ def _make_model(async_=False):
     return cls(
         model_id="opencode-go/deepseek-v4-flash",
         model_name="deepseek-v4-flash",
+        api_base="https://opencode.ai/zen/go/v1",
+    )
+
+
+def _make_responses_model(async_=False):
+    cls = OpenCodeGoResponsesAsyncChat if async_ else OpenCodeGoResponsesChat
+    return cls(
+        model_id="opencode-go/gpt-6-luna",
+        model_name="gpt-6-luna",
         api_base="https://opencode.ai/zen/go/v1",
     )
 
@@ -158,3 +172,33 @@ async def test_async_interleaved_conversations_keep_separate_sessions():
 
     assert _texts(results[0]) == ["session-aaa"]
     assert _texts(results[1]) == ["session-bbb"]
+
+
+def _responses_completion(output_text="Hello"):
+    completion = MagicMock()
+    completion.model_dump.return_value = {
+        "id": "resp_test",
+        "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+    }
+    completion.output = []
+    return completion
+
+
+def test_responses_session_header_from_conversation():
+    model = _make_responses_model()
+    mock_client = MagicMock()
+    mock_client.responses.create.return_value = _responses_completion()
+    captured_client_kwargs = {}
+
+    def fake_openai(**kwargs):
+        captured_client_kwargs.update(kwargs)
+        return mock_client
+
+    conv = Conversation(id="my-session-uuid")
+    with patch("openai.OpenAI", new=fake_openai):
+        chunks = list(
+            model.execute(_make_prompt(model), False, MagicMock(), conv, "sk-test")
+        )
+    assert captured_client_kwargs["default_headers"] == {
+        "x-opencode-session": "my-session-uuid"
+    }

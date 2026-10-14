@@ -17,7 +17,7 @@ classifiers = [
     "License :: OSI Approved :: Apache Software License"
 ]
 dependencies = [
-    "llm>=0.27.1",
+    "llm>=0.36",
     "httpx2>=2.12.0",
     "openai>=1.57.0",
     "anthropic",

@@ -34,6 +34,19 @@ def test_opencode_models_cli(mock_get_models):
 
 
 @patch("llm_opencode.get_opencode_models")
+def test_opencode_models_cli_responses_protocol(mock_get_models):
+    mock_get_models.return_value = [
+        {"id": "gpt-6-luna"},
+    ]
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["opencode", "models"])
+    assert result.exit_code == 0, result.output
+    assert "openai-responses" in result.output
+    assert "/v1/responses" in result.output
+
+
+@patch("llm_opencode.get_opencode_models")
 def test_opencode_models_cli_json(mock_get_models):
     mock_get_models.return_value = [
         {"id": "glm-5"},

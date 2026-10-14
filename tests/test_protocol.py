@@ -44,3 +44,20 @@ def test_get_protocol():
     assert _get_protocol("minimax-m2.7") == "anthropic"
     assert _get_protocol("qwen3.7-max") == "anthropic"
     assert _get_protocol("unknown-model") == "openai"
+
+
+def test_get_protocol_responses():
+    assert _get_protocol("gpt-6-luna") == "openai-responses"
+    assert _get_protocol("gpt-5.6-luna") == "openai-responses"
+    assert _get_protocol("grok-4.6") == "openai-responses"
+    assert _get_protocol("grok-4.7") == "openai-responses"
+    assert _get_protocol("muse-spark-1.2-contributor") == "openai-responses"
+    assert _get_protocol("muse-spark-1.3-contributor") == "openai-responses"
+
+
+def test_get_protocol_new_model_ids():
+    assert _get_protocol("claude-haiku-5-5") == "anthropic"
+    assert _get_protocol("qwen3.8-max") == "anthropic"
+    assert _get_protocol("qwen3.8-flash") == "anthropic"
+    assert _get_protocol("glm-5.3-flash") == "openai"
+    assert _get_protocol("hy4-preview") == "openai"
