@@ -19,7 +19,7 @@ classifiers = [
 dependencies = [
     "llm>=0.36",
     "httpx2>=2.12.0",
-    "openai>=1.57.0",
+    "openai>3",
     "anthropic",
 ]
 
@@ -30,7 +30,7 @@ Homepage = "https://github.com/brendonmackenzie/llm-opencode"
 opencode = "llm_opencode"
 
 [project.optional-dependencies]
-test = ["pytest", "pytest-recording", "pytest-cov", "inline-snapshot", "pytest-asyncio", "pytest-timeout", "ty"]
+test = ["pytest", "pytest-cov", "inline-snapshot", "pytest-asyncio", "pytest-timeout", "ty"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
