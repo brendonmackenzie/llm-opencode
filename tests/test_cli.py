@@ -3,6 +3,7 @@ import io
 import json
 from unittest.mock import patch
 
+import pytest
 from click.testing import CliRunner
 from llm.cli import cli
 
@@ -164,17 +165,127 @@ def test_opencode_models_detail_default_table(mock_fetch):
     result = runner.invoke(cli, ["opencode", "models", "detail"])
     assert result.exit_code == 0, result.output
     assert "Model ID" in result.output
+    assert "Protocol" in result.output
+    assert "openai-responses" in result.output
+    assert "anthropic" in result.output
     assert "grok-4.5" in result.output
     assert "minimax-m3" in result.output
     assert "$2.00" in result.output
     assert "30 days" in result.output
-    assert "Limit" in result.output
+    assert "Monthly Cap" in result.output
     assert "$15.00" in result.output
     assert "$60.00" in result.output
     assert "Req/Month" in result.output
     assert "600" in result.output
     assert "16,000" in result.output
     assert result.output.index("Req/Month") < result.output.index("Input")
+
+
+@patch("llm_opencode.fetch_unified_models")
+def test_opencode_detail_primary_command(mock_fetch):
+    mock_fetch.return_value = _snapshot(_unified_models())
+
+    runner = CliRunner()
+    primary = runner.invoke(cli, ["opencode", "detail"])
+    alias = runner.invoke(cli, ["opencode", "models", "detail"])
+    assert primary.exit_code == 0, primary.output
+    assert alias.exit_code == 0, alias.output
+    assert primary.output == alias.output
+
+
+@patch("llm_opencode.fetch_unified_models")
+def test_opencode_detail_plan_default_shows_go(mock_fetch):
+    mock_fetch.return_value = _snapshot(_unified_models())
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["opencode", "detail"])
+    assert result.exit_code == 0, result.output
+    assert "$15.00" in result.output
+    assert "$60.00" in result.output
+    assert "$45.00" not in result.output
+    assert "$180.00" not in result.output
+
+
+@patch("llm_opencode.fetch_unified_models")
+def test_opencode_detail_plan_go_plus(mock_fetch):
+    mock_fetch.return_value = _snapshot(_unified_models())
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["opencode", "detail", "--plan", "go_plus"])
+    assert result.exit_code == 0, result.output
+    assert "$45.00" in result.output
+    assert "$180.00" in result.output
+    assert "1,800" in result.output
+    assert "48,000" in result.output
+    assert "$15.00" not in result.output
+    assert "$60.00" not in result.output
+    # No re-scrape: the plan filter reads the plan-keyed data already in the entry.
+    assert mock_fetch.call_count == 1
+
+
+@patch("llm_opencode.fetch_unified_models")
+def test_opencode_detail_plan_all_renders_plan_labelled_rows(mock_fetch):
+    mock_fetch.return_value = _snapshot(_unified_models())
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["opencode", "detail", "--plan", "all"])
+    assert result.exit_code == 0, result.output
+    assert "Plan" in result.output
+    # Two plan-labelled rows per model.
+    assert result.output.count("minimax-m3") == 2
+    assert result.output.count("grok-4.5") == 2
+    assert "$15.00" in result.output
+    assert "$45.00" in result.output
+
+
+@patch("llm_opencode.fetch_unified_models")
+def test_opencode_detail_plan_all_csv_plan_labelled_rows(mock_fetch):
+    mock_fetch.return_value = _snapshot(_unified_models())
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["opencode", "detail", "--plan", "all", "--format", "csv"])
+    assert result.exit_code == 0, result.output
+
+    rows = [row for row in csv.reader(io.StringIO(result.output)) if row]
+    assert len(rows) == 5  # header + two rows per model
+    per_model = {}
+    for row in rows[1:]:
+        per_model.setdefault(row[0], set()).add(row[2])
+    assert per_model == {"grok-4.5": {"go", "go_plus"}, "minimax-m3": {"go", "go_plus"}}
+
+
+@patch("llm_opencode.fetch_unified_models")
+def test_opencode_plan_all_csv_rows_carry_their_own_plan_data(mock_fetch):
+    mock_fetch.return_value = _snapshot(_unified_models())
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["opencode", "detail", "--plan", "all", "--format", "csv"])
+    assert result.exit_code == 0, result.output
+
+    rows = [row for row in csv.reader(io.StringIO(result.output)) if row]
+    by_key = {(row[0], row[2]): row for row in rows[1:]}
+    grok_go = by_key[("grok-4.5", "go")]
+    grok_plus = by_key[("grok-4.5", "go_plus")]
+    assert grok_go[9] == "15.0"
+    assert grok_plus[9] == "45.0"
+    assert grok_go[17] == "600"
+    assert grok_plus[17] == "1800"
+
+
+@patch("llm_opencode.fetch_unified_models")
+def test_opencode_detail_json_unaffected_by_plan_filter(mock_fetch):
+    mock_fetch.return_value = _snapshot(_unified_models())
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli, ["opencode", "detail", "--plan", "go_plus", "--format", "json"]
+    )
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["count"] == 2
+    for model in data["models"]:
+        assert set(model["pricing"]) == {"go", "go_plus"}
+        assert set(model["rate_limits"]) == {"go", "go_plus"}
 
 
 @patch("llm_opencode.fetch_unified_models")
@@ -188,13 +299,23 @@ def test_opencode_models_detail_default_sort_requests(mock_fetch):
 
 
 @patch("llm_opencode.fetch_unified_models")
-def test_opencode_models_detail_sort_by_usage(mock_fetch):
+def test_opencode_models_detail_sort_by_monthly_limit(mock_fetch):
     mock_fetch.return_value = _snapshot(_unified_models())
 
     runner = CliRunner()
-    result = runner.invoke(cli, ["opencode", "models", "detail", "--sort-by", "usage"])
+    result = runner.invoke(cli, ["opencode", "detail", "--sort-by", "monthly-limit"])
     assert result.exit_code == 0, result.output
     assert result.output.index("grok-4.5") < result.output.index("minimax-m3")
+
+
+@patch("llm_opencode.fetch_unified_models")
+def test_opencode_models_detail_sort_by_usage_removed(mock_fetch):
+    mock_fetch.return_value = _snapshot(_unified_models())
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["opencode", "detail", "--sort-by", "usage"])
+    assert result.exit_code == 2
+    assert "is not one of" in result.output
 
 
 @patch("llm_opencode.fetch_unified_models")
@@ -379,21 +500,123 @@ def test_opencode_models_detail_csv(mock_fetch):
     mock_fetch.return_value = _snapshot(_unified_models())
 
     runner = CliRunner()
-    result = runner.invoke(cli, ["opencode", "models", "detail", "--format", "csv"])
+    result = runner.invoke(cli, ["opencode", "detail", "--format", "csv"])
     assert result.exit_code == 0, result.output
 
     rows = list(csv.reader(io.StringIO(result.output)))
     assert rows[0] == [
-        "model_id", "model_name", "provider", "matched",
+        "model_id", "model_name", "plan", "protocol", "matched",
         "input_price", "output_price", "cached_read", "cached_write",
         "monthly_limit", "limit_note",
         "endpoint", "ai_sdk_package", "data_retention", "model_training",
         "rate_per_5h", "rate_per_week", "rate_per_month",
     ]
+    assert "provider" not in rows[0]
     assert rows[1][0] == "minimax-m3"
-    assert rows[1][4] == "0.3"
-    assert rows[1][8] == "60.0"
-    assert rows[1][9] == "limited time"
+    assert rows[1][2] == "go"
+    assert rows[1][3] == "anthropic"
+    assert rows[1][5] == "0.3"
+    assert rows[1][9] == "60.0"
+    assert rows[1][10] == "limited time"
+
+
+@patch("llm_opencode.fetch_unified_models")
+def test_opencode_models_detail_csv_protocol_for_unknown_model(mock_fetch):
+    models = _unified_models() + [
+        {
+            "model_id": "omen-alpha",
+            "model_name": "Omen Alpha",
+            "provider": "opencode",
+            "created": 999,
+            "matched": False,
+            "endpoint": "",
+            "ai_sdk_package": "",
+            "model_training": "",
+            "data_retention": "",
+            "pricing": {},
+            "rate_limits": {},
+        },
+    ]
+    mock_fetch.return_value = _snapshot(models)
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["opencode", "detail", "--format", "csv"])
+    assert result.exit_code == 0, result.output
+
+    rows = list(csv.reader(io.StringIO(result.output)))
+    omen = next(row for row in rows[1:] if row[0] == "omen-alpha")
+    assert omen[3] == ""  # protocol unknown, rendered without a crash
+
+
+@patch("llm_opencode.fetch_unified_models")
+def test_opencode_models_detail_table_unregistered_section(mock_fetch):
+    models = _unified_models() + [
+        {
+            "model_id": "omen-alpha",
+            "model_name": "Omen Alpha",
+            "provider": "opencode",
+            "created": 999,
+            "matched": False,
+            "endpoint": "",
+            "ai_sdk_package": "",
+            "model_training": "",
+            "data_retention": "",
+            "pricing": {},
+            "rate_limits": {},
+        },
+        {
+            "model_id": "gemini-4-argon-contributor",
+            "model_name": "Gemini 4 Argon Contributor",
+            "provider": "opencode",
+            "created": 1000,
+            "matched": True,
+            "endpoint": "https://opencode.ai/inference/go/v1/models/gemini-4-argon-contributor",
+            "ai_sdk_package": "@ai-sdk/google",
+            "model_training": "",
+            "data_retention": "",
+            "pricing": {},
+            "rate_limits": {},
+        },
+    ]
+    mock_fetch.return_value = _snapshot(models)
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["opencode", "detail"])
+    assert result.exit_code == 0, result.output
+    assert "Unregistered:" in result.output
+    assert "omen-alpha — protocol unknown: no docs row" in result.output
+    assert (
+        "gemini-4-argon-contributor — unsupported protocol: google-style"
+        in result.output
+    )
+    # Graceful protocol rendering for unregistered models.
+    assert result.output.count("unknown") >= 2
+
+
+@patch("llm_opencode.fetch_unified_models")
+def test_opencode_models_detail_pricing_plan_go_plus(mock_fetch):
+    mock_fetch.return_value = _snapshot(_unified_models())
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["opencode", "detail", "--plan", "go_plus", "--format", "pricing"])
+    assert result.exit_code == 0, result.output
+    assert "$45.00" in result.output
+    assert "$180.00" in result.output
+    assert "$15.00" not in result.output
+    assert "$60.00" not in result.output
+
+
+@patch("llm_opencode.fetch_unified_models")
+def test_opencode_models_detail_pricing_plan_all_labels_plans(mock_fetch):
+    mock_fetch.return_value = _snapshot(_unified_models())
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["opencode", "detail", "--plan", "all", "--format", "pricing"])
+    assert result.exit_code == 0, result.output
+    assert "grok-4.5 (go)" in result.output
+    assert "grok-4.5 (go_plus)" in result.output
+    assert "minimax-m3 (go)" in result.output
+    assert "minimax-m3 (go_plus)" in result.output
 
 
 @patch("llm_opencode.fetch_unified_models")
@@ -429,14 +652,13 @@ def test_opencode_models_detail_search_matches_name(mock_fetch):
 
 
 @patch("llm_opencode.fetch_unified_models")
-def test_opencode_models_detail_provider_filter(mock_fetch):
+def test_opencode_models_detail_provider_filter_removed(mock_fetch):
     mock_fetch.return_value = _snapshot(_unified_models())
 
     runner = CliRunner()
-    result = runner.invoke(cli, ["opencode", "models", "detail", "--provider", "opencode"])
-    assert result.exit_code == 0, result.output
-    assert "grok-4.5" in result.output
-    assert "minimax-m3" in result.output
+    result = runner.invoke(cli, ["opencode", "detail", "--provider", "opencode"])
+    assert result.exit_code == 2
+    assert "No such option" in result.output
 
 
 @patch("llm_opencode.fetch_unified_models")
@@ -646,13 +868,43 @@ def test_sort_models_by_output():
     assert [m["model_id"] for m in result] == ["b", "a"]
 
 
-def test_sort_models_by_usage():
+def test_sort_models_by_monthly_limit():
     models = [
         _model("a", "A", 1.0, 60.0, 300),
         _model("b", "B", 1.0, 15.0, 300),
     ]
-    result = sort_models(models, sort_by="usage")
+    result = sort_models(models, sort_by="monthly-limit")
     assert [m["model_id"] for m in result] == ["b", "a"]
+
+
+def test_sort_models_monthly_limit_missing_pinned_last():
+    models = [
+        _model("a", "A", 1.0, None, 300),
+        _model("b", "B", 1.0, 15.0, 300),
+    ]
+    result = sort_models(models, sort_by="monthly-limit")
+    assert [m["model_id"] for m in result] == ["b", "a"]
+
+
+def test_sort_models_usage_removed():
+    models = [_model("a", "A", 1.0, 15.0, 300)]
+    with pytest.raises(KeyError):
+        sort_models(models, sort_by="usage")
+
+
+def test_sort_models_respects_plan_filter():
+    models = [
+        _model("a", "A", 1.0, 15.0, 300),
+        _model("b", "B", 1.0, 60.0, 300),
+    ]
+    for model in models:
+        model["pricing"]["go_plus"] = {
+            "input": 1.0, "output": 1.0, "cached_read": None,
+            "cached_write": None, "monthly_limit": 200.0,
+        }
+    models[0]["pricing"]["go_plus"]["monthly_limit"] = 5.0
+    result = sort_models(models, sort_by="monthly-limit", plan="go_plus")
+    assert [m["model_id"] for m in result] == ["a", "b"]
 
 
 def test_sort_models_by_name():

@@ -10,6 +10,8 @@ from .routing import analyze_routes, corroboration_warnings, unregistered_routes
 from .unified import MODELS_URL
 
 DEFAULT_PLAN = "go"
+PLANS = ("go", "go_plus")
+PROTOCOL_UNKNOWN = "unknown"
 
 
 @llm.hookimpl
@@ -39,7 +41,7 @@ def register_commands(cli):
                 click.echo("  protocol: unknown (no scrape data)")
                 click.echo()
 
-    @models.command()
+    @opencode.command()
     @click.option(
         "--format",
         "-f",
@@ -49,17 +51,27 @@ def register_commands(cli):
         help="Output format",
     )
     @click.option("--search", help="Search models by name or ID")
-    @click.option("--provider", help="Filter by provider")
     @click.option("--model", "model_id", help="Filter by exact model ID")
     @click.option(
+        "--plan",
+        type=click.Choice(["go", "go_plus", "all"]),
+        default=DEFAULT_PLAN,
+        help=(
+            "Plan to show pricing and rate limits for "
+            "(JSON always carries both plans; the filter only changes their order)"
+        ),
+    )
+    @click.option(
         "--sort-by",
-        type=click.Choice(["requests", "input", "output", "usage", "name", "model_id"]),
+        type=click.Choice(
+            ["requests", "input", "output", "monthly-limit", "name", "model_id"]
+        ),
         default="requests",
         help="Sort order (pricing format always sorts by input price)",
     )
     @click.option("-o", "--output", type=click.Path(), help="Write output to file")
-    def detail(format_, sort_by, search, provider, model_id, output):
-        "Show detailed model info including pricing, rate limits, and policies"
+    def detail(format_, sort_by, search, model_id, plan, output):
+        "Show detailed model info including pricing, rate limits, and protocols"
         from llm_opencode import fetch_unified_models
 
         try:
@@ -75,9 +87,6 @@ def register_commands(cli):
         if model_id:
             query = model_id.lower()
             unified = [m for m in unified if m.get("model_id", "").lower() == query]
-        if provider:
-            query = provider.lower()
-            unified = [m for m in unified if query in m.get("provider", "").lower()]
         if search:
             query = search.lower()
             unified = [
@@ -87,14 +96,14 @@ def register_commands(cli):
                 or query in m.get("model_name", "").lower()
             ]
 
+        routes = analyze_routes(unified)
         formatters = {
             "table": format_unified_table,
             "csv": format_unified_csv,
             "pricing": format_unified_pricing,
         }
         if format_ == "json":
-            unified = sort_models(unified, sort_by)
-            routes = analyze_routes(unified)
+            routes = sort_models(routes, sort_by, plan=plan)
             result = format_unified_json(
                 routes,
                 warnings=[
@@ -106,14 +115,17 @@ def register_commands(cli):
             )
         else:
             if format_ != "pricing":
-                unified = sort_models(unified, sort_by)
-            result = formatters[format_](unified)
+                routes = sort_models(routes, sort_by, plan=plan)
+            result = formatters[format_](routes, plan=plan)
 
         if output:
             with open(output, "w", encoding="utf-8") as file:
                 file.write(result)
         else:
             click.echo(result)
+
+    # Alias: `llm opencode models detail` resolves to the same command.
+    models.add_command(detail)
 
 
 def _plan_pricing(model, plan=DEFAULT_PLAN):
@@ -134,6 +146,15 @@ def _plan_rate_limits(model, plan=DEFAULT_PLAN):
     return {}
 
 
+def _plan_block(container, plan):
+    """A strict plan block lookup: no first-value fallback, {} when absent."""
+    if isinstance(container, dict):
+        block = container.get(plan)
+        if isinstance(block, dict):
+            return block
+    return {}
+
+
 def _parse_rate_limit(value):
     """Parse a rate limit like '1,080' into an int, or 0 when missing/invalid."""
     if not value:
@@ -144,19 +165,19 @@ def _parse_rate_limit(value):
         return 0
 
 
-def _requests_per_month_key(model):
+def _requests_per_month_key(model, plan=DEFAULT_PLAN):
     """Sort key: highest requests per month first, then cheapest input."""
-    per_month = _parse_rate_limit(_plan_rate_limits(model).get("per_month"))
-    input_price = _plan_pricing(model).get("input")
+    per_month = _parse_rate_limit(_plan_rate_limits(model, plan).get("per_month"))
+    input_price = _plan_pricing(model, plan).get("input")
     input_sort = input_price if input_price is not None else float("inf")
     if per_month > 0:
         return (False, -per_month, input_sort)
     return (True, 0, input_sort)
 
 
-def _price_key(model, field):
+def _price_key(model, field, plan=DEFAULT_PLAN):
     """Sort key for a pricing field: ascending, missing values pinned to the end."""
-    value = _plan_pricing(model).get(field)
+    value = _plan_pricing(model, plan).get(field)
     if value is not None:
         return (False, value)
     return (True, 0.0)
@@ -172,13 +193,13 @@ def _model_id_key(model):
     return (not model_id, model_id.lower())
 
 
-def sort_models(models, sort_by="requests"):
+def sort_models(models, sort_by="requests", plan=DEFAULT_PLAN):
     """Sort unified models by the given key (default: requests per month, highest first)."""
     keys = {
-        "requests": _requests_per_month_key,
-        "input": lambda m: _price_key(m, "input"),
-        "output": lambda m: _price_key(m, "output"),
-        "usage": lambda m: _price_key(m, "monthly_limit"),
+        "requests": lambda m: _requests_per_month_key(m, plan),
+        "input": lambda m: _price_key(m, "input", plan),
+        "output": lambda m: _price_key(m, "output", plan),
+        "monthly-limit": lambda m: _price_key(m, "monthly_limit", plan),
         "name": _name_key,
         "model_id": _model_id_key,
     }
@@ -213,110 +234,160 @@ def _fmt_requests_per_month(value):
     return f"{value:,}" if value > 0 else "—"
 
 
-def format_unified_table(models):
+def _plan_selection(model, plan, current_plan):
+    """Pricing/rate-limit blocks for a row, honoring the ``--plan`` filter.
+
+    In ``all`` mode the plan blocks are looked up strictly — a missing plan
+    renders dashes instead of silently borrowing the other plan's numbers.
+    """
+    if plan == "all":
+        return _plan_block(model.get("pricing"), current_plan), _plan_block(
+            model.get("rate_limits"), current_plan
+        )
+    return _plan_pricing(model, plan), _plan_rate_limits(model, plan)
+
+
+def _render_table(headers, rows):
+    widths = [
+        max(len(header), max((len(str(row[i])) for row in rows), default=0))
+        for i, header in enumerate(headers)
+    ]
+    lines = ["  ".join(header.ljust(width) for header, width in zip(headers, widths))]
+    lines.append("  ".join("─" * width for width in widths))
+    for row in rows:
+        lines.append("  ".join(str(cell).ljust(width) for cell, width in zip(row, widths)))
+    return lines
+
+
+def format_unified_table(models, plan=DEFAULT_PLAN):
     """Format unified models as a pretty pricing table."""
     if not models:
         return "No models found."
 
+    show_plans = PLANS if plan == "all" else (plan,)
+    headers = [
+        "Model ID", "Name", "Protocol", "Req/Month", "Input", "Output",
+        "Cache R", "Cache W", "Monthly Cap", "Retention",
+    ]
+    if plan == "all":
+        headers.insert(0, "Plan")
     rows = []
     for model in models:
-        pricing = _plan_pricing(model)
-        per_month = _parse_rate_limit(_plan_rate_limits(model).get("per_month"))
-        rows.append(
-            [
-                model.get("model_id", "")[:25],
-                model.get("model_name", "")[:20],
-                _fmt_requests_per_month(per_month),
-                _fmt_price(pricing.get("input")),
-                _fmt_price(pricing.get("output")),
-                _fmt_price(pricing.get("cached_read")),
-                _fmt_price(pricing.get("cached_write")),
-                _fmt_price(pricing.get("monthly_limit")),
-                model.get("data_retention", "")[:10] or "—",
-            ]
-        )
+        protocol = model.get("protocol") or PROTOCOL_UNKNOWN
+        for current_plan in show_plans:
+            pricing, rate_limits = _plan_selection(model, plan, current_plan)
+            per_month = _parse_rate_limit(rate_limits.get("per_month"))
+            row = []
+            if plan == "all":
+                row.append(current_plan)
+            row.extend(
+                [
+                    model.get("model_id", "")[:25],
+                    model.get("model_name", "")[:20],
+                    protocol,
+                    _fmt_requests_per_month(per_month),
+                    _fmt_price(pricing.get("input")),
+                    _fmt_price(pricing.get("output")),
+                    _fmt_price(pricing.get("cached_read")),
+                    _fmt_price(pricing.get("cached_write")),
+                    _fmt_price(pricing.get("monthly_limit")),
+                    model.get("data_retention", "")[:10] or "—",
+                ]
+            )
+            rows.append(row)
 
-    headers = [
-        "Model ID", "Name", "Req/Month", "Input", "Output",
-        "Cache R", "Cache W", "Limit", "Retention",
-    ]
-    widths = [
-        max(len(header), max((len(row[i]) for row in rows), default=0))
-        for i, header in enumerate(headers)
-    ]
+    lines = _render_table(headers, rows)
 
-    lines = []
-    lines.append("  ".join(header.ljust(width) for header, width in zip(headers, widths)))
-    lines.append("  ".join("─" * width for width in widths))
-    for row in rows:
-        lines.append("  ".join(cell.ljust(width) for cell, width in zip(row, widths)))
+    skipped = [model for model in models if model.get("registered") is False]
+    if skipped:
+        lines.append("")
+        lines.append("Unregistered:")
+        for model in skipped:
+            model_id = str(model.get("model_id") or "?")
+            reason = model.get("skip_reason") or ""
+            lines.append(f"  {model_id} — {reason}")
     return "\n".join(lines)
 
 
-def format_unified_csv(models):
-    """Format unified models as CSV."""
+CSV_HEADERS = [
+    "model_id",
+    "model_name",
+    "plan",
+    "protocol",
+    "matched",
+    "input_price",
+    "output_price",
+    "cached_read",
+    "cached_write",
+    "monthly_limit",
+    "limit_note",
+    "endpoint",
+    "ai_sdk_package",
+    "data_retention",
+    "model_training",
+    "rate_per_5h",
+    "rate_per_week",
+    "rate_per_month",
+]
+
+
+def format_unified_csv(models, plan=DEFAULT_PLAN):
+    """Format unified models as CSV (one row per model-plan combination)."""
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(
-        [
-            "model_id",
-            "model_name",
-            "provider",
-            "matched",
-            "input_price",
-            "output_price",
-            "cached_read",
-            "cached_write",
-            "monthly_limit",
-            "limit_note",
-            "endpoint",
-            "ai_sdk_package",
-            "data_retention",
-            "model_training",
-            "rate_per_5h",
-            "rate_per_week",
-            "rate_per_month",
-        ]
-    )
+    writer.writerow(CSV_HEADERS)
     for model in models:
-        pricing = _plan_pricing(model)
-        rate_limits = _plan_rate_limits(model)
-        writer.writerow(
-            [
-                model.get("model_id", ""),
-                model.get("model_name", ""),
-                model.get("provider", ""),
-                model.get("matched", ""),
-                pricing.get("input", ""),
-                pricing.get("output", ""),
-                pricing.get("cached_read", ""),
-                pricing.get("cached_write", ""),
-                pricing.get("monthly_limit", ""),
-                pricing.get("limit_note", ""),
-                model.get("endpoint", ""),
-                model.get("ai_sdk_package", ""),
-                model.get("data_retention", ""),
-                model.get("model_training", ""),
-                rate_limits.get("per_5_hours", ""),
-                rate_limits.get("per_week", ""),
-                rate_limits.get("per_month", ""),
-            ]
-        )
+        show_plans = PLANS if plan == "all" else (plan,)
+        protocol = model.get("protocol") or ""
+        for current_plan in show_plans:
+            pricing, rate_limits = _plan_selection(model, plan, current_plan)
+            writer.writerow(
+                [
+                    model.get("model_id", ""),
+                    model.get("model_name", ""),
+                    current_plan,
+                    protocol,
+                    model.get("matched", ""),
+                    pricing.get("input", ""),
+                    pricing.get("output", ""),
+                    pricing.get("cached_read", ""),
+                    pricing.get("cached_write", ""),
+                    pricing.get("monthly_limit", ""),
+                    pricing.get("limit_note", ""),
+                    model.get("endpoint", ""),
+                    model.get("ai_sdk_package", ""),
+                    model.get("data_retention", ""),
+                    model.get("model_training", ""),
+                    rate_limits.get("per_5_hours", ""),
+                    rate_limits.get("per_week", ""),
+                    rate_limits.get("per_month", ""),
+                ]
+            )
     return buf.getvalue()
 
 
-def format_unified_pricing(models):
+def format_unified_pricing(models, plan=DEFAULT_PLAN):
     """Format unified models as a pricing comparison sorted by input cost."""
-    priced = [m for m in models if _plan_pricing(m).get("input") is not None]
-    priced.sort(key=lambda m: _plan_pricing(m)["input"])
+    priced = []
+    show_plans = PLANS if plan == "all" else (plan,)
+    for model in models:
+        name = model.get("model_id") or model.get("model_name") or "?"
+        for current_plan in show_plans:
+            if plan == "all":
+                pricing = _plan_block(model.get("pricing"), current_plan)
+            else:
+                pricing = _plan_pricing(model, current_plan)
+            if pricing.get("input") is None:
+                continue
+            label = f"{name} ({current_plan})" if plan == "all" else name
+            priced.append((label, model, pricing))
+    priced.sort(key=lambda entry: entry[2]["input"])
 
     if not priced:
         return "No pricing data found."
 
     lines = ["Pricing Comparison (per 1M tokens)", "═" * 70]
-    for model in priced:
-        pricing = _plan_pricing(model)
-        name = model.get("model_id") or model.get("model_name") or "?"
+    for name, model, pricing in priced:
         lines.append(f"\n  {name}")
         note = pricing.get("pricing_note")
         suffix = f" ({note})" if note else ""

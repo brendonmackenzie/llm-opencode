@@ -76,19 +76,20 @@ Show rich model metadata (pricing, rate limits, endpoints, and data retention
 policies) merged from the OpenCode Go API and docs:
 
 ```bash
-llm opencode models detail                # pricing table (default)
-llm opencode models detail --format json  # full JSON
-llm opencode models detail --format csv   # CSV export
-llm opencode models detail --format pricing  # sorted by input cost
+llm opencode detail                       # pricing table (default)
+llm opencode detail --format json         # full JSON
+llm opencode detail --format csv          # CSV export
+llm opencode detail --format pricing      # sorted by input cost
+llm opencode models detail                # alias for `llm opencode detail`
 ```
 
 Filter the details:
 
 ```bash
-llm opencode models detail --search qwen
-llm opencode models detail --provider anthropic
-llm opencode models detail --model minimax-m3
-llm opencode models detail --format csv -o models.csv
+llm opencode detail --search qwen
+llm opencode detail --plan go_plus
+llm opencode detail --model minimax-m3
+llm opencode detail --format csv -o models.csv
 ```
 
 By default, models are sorted by **plan value** (requests per month per dollar —
@@ -97,11 +98,11 @@ metric as its **Plan Value** column (e.g. `2,636 req/$`). Change the sort order
 with `--sort-by`:
 
 ```bash
-llm opencode models detail                          # best plan value first (default)
-llm opencode models detail --sort-by input          # cheapest per-token first
-llm opencode models detail --sort-by usage          # lowest monthly cap first
-llm opencode models detail --sort-by name           # alphabetical by display name
-llm opencode models detail --sort-by model_id       # by model ID
+llm opencode detail                           # best plan value first (default)
+llm opencode detail --sort-by input           # cheapest per-token first
+llm opencode detail --sort-by monthly-limit   # lowest monthly cap first
+llm opencode detail --sort-by name            # alphabetical by display name
+llm opencode detail --sort-by model_id        # by model ID
 ```
 
 The `pricing` format always sorts by input price ascending.
