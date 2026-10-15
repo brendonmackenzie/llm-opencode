@@ -65,6 +65,26 @@ def get_opencode_models():
     return models
 
 
+def read_api_models_cache():
+    """Read the models-API list cache from disk without refresh or fetch.
+
+    Returns the ``data`` list when the file exists and parses, else ``None``.
+    There is intentionally no freshness check and no network fallback: the
+    plain listing is offline-only.
+    """
+    path = llm.user_dir() / "opencode_models.json"
+    if path.is_file():
+        try:
+            with open(path) as file:
+                cached = json.load(file)
+            data = cached.get("data") if isinstance(cached, dict) else None
+            if isinstance(data, list):
+                return data
+        except (json.JSONDecodeError, OSError):
+            pass
+    return None
+
+
 def _unified_entry(model_id, api_model, docs_entry):
     entry = {
         "model_id": model_id,
@@ -137,13 +157,18 @@ def read_snapshot():
     return None
 
 
-def _snapshot_is_fresh(snapshot):
-    scraped_at = snapshot.get("scraped_at", 0)
+def snapshot_age(scraped_at):
+    """Age of a ``scraped_at`` timestamp in seconds, or ``None`` when the
+    value is missing or not a number."""
     try:
-        age = time.time() - float(scraped_at)
+        return time.time() - float(scraped_at)
     except (TypeError, ValueError):
-        return False
-    return age < UNIFIED_MODELS_CACHE_TIMEOUT
+        return None
+
+
+def _snapshot_is_fresh(snapshot):
+    age = snapshot_age(snapshot.get("scraped_at", 0))
+    return age is not None and age < UNIFIED_MODELS_CACHE_TIMEOUT
 
 
 def scrape_snapshot():

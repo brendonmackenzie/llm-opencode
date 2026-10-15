@@ -1,6 +1,9 @@
 import csv
 import io
 import json
+import os
+import pathlib
+import time
 from unittest.mock import patch
 
 import pytest
@@ -18,76 +21,86 @@ def test_llm_models(mock_get_models, make_opencode_models, user_dir):
     assert result.exit_code == 0, result.output
 
 
-@patch("llm_opencode.get_opencode_models")
-def test_opencode_models_cli(mock_get_models, user_dir):
-    mock_get_models.return_value = [
-        {"id": "glm-5"},
-        {"id": "minimax-m3"},
-    ]
+def _write_api_cache(user_dir, models):
+    """Write an opencode_models.json API-list cache into the isolated user dir."""
+    path = pathlib.Path(user_dir) / "opencode_models.json"
+    path.write_text(json.dumps({"data": models}))
+    return path
 
-    runner = CliRunner()
-    result = runner.invoke(cli, ["opencode", "models"])
+
+def _invoke_listing_banned_from_network(user_dir, *args):
+    """Invoke an offline listing with the network patched as an assert-tripwire."""
+    with patch("httpx2.get", side_effect=AssertionError("listing hit the network")):
+        return CliRunner().invoke(cli, [*args])
+
+
+def test_opencode_models_listing_uses_api_cache_without_network(user_dir):
+    _write_api_cache(user_dir, [{"id": "glm-5"}, {"id": "minimax-m3"}])
+
+    with patch("llm_opencode.get_opencode_models") as mock_get:
+        result = _invoke_listing_banned_from_network(user_dir, "opencode", "models")
+
     assert result.exit_code == 0, result.output
     assert "glm-5" in result.output
     assert "minimax-m3" in result.output
     assert "unknown (no scrape data)" in result.output
+    mock_get.assert_not_called()
 
 
-@patch("llm_opencode.get_opencode_models")
-def test_opencode_models_cli_does_not_fabricate_protocols(mock_get_models, user_dir):
-    mock_get_models.return_value = [
-        {"id": "gpt-6-luna"},
-        {"id": "minimax-m3"},
-    ]
+def test_opencode_models_listing_serves_expired_cache_without_refresh(user_dir):
+    path = _write_api_cache(user_dir, [{"id": "glm-5"}])
+    os.utime(path, (0, 0))  # ancient mtime: no freshness check, no refresh
 
-    runner = CliRunner()
-    result = runner.invoke(cli, ["opencode", "models"])
+    with patch("llm_opencode.get_opencode_models") as mock_get:
+        result = _invoke_listing_banned_from_network(user_dir, "opencode", "models")
+
+    assert result.exit_code == 0, result.output
+    assert "- id: glm-5" in result.output
+    mock_get.assert_not_called()
+
+
+def test_opencode_models_listing_does_not_fabricate_protocols(user_dir):
+    _write_api_cache(user_dir, [{"id": "gpt-6-luna"}, {"id": "minimax-m3"}])
+
+    result = _invoke_listing_banned_from_network(user_dir, "opencode", "models")
+
     assert result.exit_code == 0, result.output
     assert "openai" not in result.output
     assert "anthropic" not in result.output
     assert "/v1/responses" not in result.output
 
 
-@patch("llm_opencode.get_opencode_models")
-def test_opencode_models_cli_json(mock_get_models, user_dir):
-    mock_get_models.return_value = [
-        {"id": "glm-5"},
-        {"id": "minimax-m3"},
-    ]
+def test_opencode_models_listing_json(user_dir):
+    _write_api_cache(user_dir, [{"id": "glm-5"}, {"id": "minimax-m3"}])
 
-    runner = CliRunner()
-    result = runner.invoke(cli, ["opencode", "models", "--json"])
+    result = _invoke_listing_banned_from_network(user_dir, "opencode", "models", "--json")
+
     assert result.exit_code == 0, result.output
     data = json.loads(result.output)
     assert data[0]["id"] == "glm-5"
+    assert data[0]["protocol"] == "unknown (no scrape data)"
 
 
-@patch("llm_opencode.get_opencode_models")
-def test_opencode_models_cli_empty(mock_get_models, user_dir):
-    mock_get_models.return_value = []
+def test_opencode_models_listing_fresh_install_prints_hint(user_dir):
+    result = _invoke_listing_banned_from_network(user_dir, "opencode", "models")
 
-    runner = CliRunner()
-    result = runner.invoke(cli, ["opencode", "models"])
     assert result.exit_code == 0, result.output
-    assert result.output == ""
+    assert "No OpenCode Go model data saved yet" in result.output
+    assert "llm opencode detail" in result.output
 
 
-@patch("llm_opencode.get_opencode_models")
-def test_opencode_models_cli_empty_json(mock_get_models, user_dir):
-    mock_get_models.return_value = []
+def test_opencode_models_listing_fresh_install_json_empty(user_dir):
+    result = _invoke_listing_banned_from_network(user_dir, "opencode", "models", "--json")
 
-    runner = CliRunner()
-    result = runner.invoke(cli, ["opencode", "models", "--json"])
     assert result.exit_code == 0, result.output
     assert json.loads(result.output) == []
 
 
-@patch("llm_opencode.get_opencode_models")
-def test_opencode_default_to_models(mock_get_models, user_dir):
-    mock_get_models.return_value = [{"id": "test-model"}]
+def test_opencode_default_to_models(user_dir):
+    _write_api_cache(user_dir, [{"id": "test-model"}])
 
-    runner = CliRunner()
-    result = runner.invoke(cli, ["opencode"])
+    result = _invoke_listing_banned_from_network(user_dir, "opencode")
+
     assert result.exit_code == 0, result.output
     assert "test-model" in result.output
 
@@ -110,12 +123,12 @@ def _unified_models():
                 "go": {
                     "input": 2.0, "output": 6.0, "cached_read": 0.3,
                     "cached_write": None, "monthly_limit": 15.0,
-                    "limit_note": None, "currency": "USD",
+                    "limit_note": None,
                 },
                 "go_plus": {
                     "input": 2.0, "output": 6.0, "cached_read": 0.3,
                     "cached_write": None, "monthly_limit": 45.0,
-                    "limit_note": None, "currency": "USD",
+                    "limit_note": None,
                 },
             },
             "rate_limits": {
@@ -137,12 +150,12 @@ def _unified_models():
                 "go": {
                     "input": 0.3, "output": 1.2, "cached_read": 0.06,
                     "cached_write": None, "monthly_limit": 60.0,
-                    "limit_note": "limited time", "currency": "USD",
+                    "limit_note": "limited time",
                 },
                 "go_plus": {
                     "input": 0.3, "output": 1.2, "cached_read": 0.06,
                     "cached_write": None, "monthly_limit": 180.0,
-                    "limit_note": "limited time", "currency": "USD",
+                    "limit_note": "limited time",
                 },
             },
             "rate_limits": {
@@ -289,6 +302,89 @@ def test_opencode_detail_json_unaffected_by_plan_filter(mock_fetch):
 
 
 @patch("llm_opencode.fetch_unified_models")
+def test_opencode_detail_json_order_ignores_plan_filter(mock_fetch):
+    mock_fetch.return_value = _snapshot(_unified_models())
+
+    runner = CliRunner()
+    default = runner.invoke(cli, ["opencode", "detail", "--format", "json"])
+    plus = runner.invoke(
+        cli, ["opencode", "detail", "--plan", "go_plus", "--format", "json"]
+    )
+    everything = runner.invoke(
+        cli, ["opencode", "detail", "--plan", "all", "--format", "json"]
+    )
+    assert default.exit_code == plus.exit_code == everything.exit_code == 0
+    models_default = json.loads(default.output)["models"]
+    assert json.loads(plus.output)["models"] == models_default
+    assert json.loads(everything.output)["models"] == models_default
+
+
+@patch("llm_opencode.fetch_unified_models")
+def test_opencode_detail_table_surfaces_scrape_warnings(mock_fetch):
+    snapshot = _snapshot(_unified_models())
+    snapshot["warnings"] = [
+        "table 3: unrecognized table shape: ['model', 'fallbacks']"
+    ]
+    mock_fetch.return_value = snapshot
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["opencode", "detail"])
+    assert result.exit_code == 0, result.output
+    assert "Warnings:" in result.output
+    assert (
+        "  table 3: unrecognized table shape: ['model', 'fallbacks']"
+        in result.output
+    )
+    assert "Model ID" in result.output
+
+
+@patch("llm_opencode.fetch_unified_models")
+def test_opencode_detail_table_surfaces_corroboration_warnings(mock_fetch):
+    models = _unified_models()
+    models[0]["ai_sdk_package"] = "@ai-sdk/google"
+    mock_fetch.return_value = _snapshot(models)
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["opencode", "detail"])
+    assert result.exit_code == 0, result.output
+    assert "Warnings:" in result.output
+    assert (
+        'protocol corroboration: grok-4.5 endpoint path resolves openai-responses '
+        'but ai_sdk_package is "@ai-sdk/google"'
+    ) in result.output
+
+
+@patch("llm_opencode.fetch_unified_models")
+def test_opencode_detail_table_warnings_after_stale_banner(mock_fetch):
+    snapshot = {
+        "scraped_at": int(time.time()) - 30 * 3600,
+        "warnings": ["table 9: header drift (missing input)"],
+        "models": _unified_models(),
+    }
+    mock_fetch.return_value = snapshot
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["opencode", "detail"])
+    assert result.exit_code == 0, result.output
+    assert "Snapshot is stale" in result.output
+    assert "Warnings:" in result.output
+    assert result.output.index("Snapshot is stale") < result.output.index("Warnings:")
+    assert result.output.index("Warnings:") < result.output.index("Model ID")
+
+
+@patch("llm_opencode.fetch_unified_models")
+def test_opencode_detail_csv_carries_no_warnings_block(mock_fetch):
+    snapshot = _snapshot(_unified_models())
+    snapshot["warnings"] = ["table 3: unrecognized table shape: ['model', 'x']"]
+    mock_fetch.return_value = snapshot
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["opencode", "detail", "--format", "csv"])
+    assert result.exit_code == 0, result.output
+    assert "Warnings:" not in result.output
+
+
+@patch("llm_opencode.fetch_unified_models")
 def test_opencode_models_detail_default_sort_requests(mock_fetch):
     mock_fetch.return_value = _snapshot(_unified_models())
 
@@ -346,7 +442,7 @@ def test_opencode_models_detail_requests_missing_pinned_last(mock_fetch):
                 "go": {
                     "input": 0.1, "output": 0.2, "cached_read": None,
                     "cached_write": None, "monthly_limit": None,
-                    "limit_note": None, "currency": "USD",
+                    "limit_note": None,
                 }
             },
             "rate_limits": {"go": {"per_5_hours": "", "per_week": "", "per_month": ""}},

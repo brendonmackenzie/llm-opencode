@@ -7,17 +7,18 @@ from datetime import datetime, timezone
 import click
 import llm
 
-from .docs_scraper import DOCS_PAGE_URL, DocsScrapeError
+from .docs_scraper import DOCS_PAGE_URL, DocsScrapeError, PLANS
 from .routing import analyze_routes, corroboration_warnings, unregistered_routes
 from .unified import (
     MODELS_URL,
     UNIFIED_MODELS_CACHE_TIMEOUT,
     DownloadError,
+    read_api_models_cache,
     read_snapshot,
+    snapshot_age,
 )
 
 DEFAULT_PLAN = "go"
-PLANS = ("go", "go_plus")
 PROTOCOL_UNKNOWN = "unknown"
 PROTOCOL_NO_SCRAPE_DATA = "unknown (no scrape data)"
 
@@ -35,10 +36,9 @@ def register_commands(cli):
     @click.option("json_", "--json", is_flag=True, help="Output as JSON")
     @click.pass_context
     def models(ctx, json_):
-        "List OpenCode Go models"
+        "List OpenCode Go models (offline: reads the local snapshot or cache)"
         if ctx.invoked_subcommand is not None:
             return
-        from llm_opencode import get_opencode_models
 
         snapshot = read_snapshot()
         if snapshot is not None:
@@ -50,8 +50,25 @@ def register_commands(cli):
                 for route in analyze_routes(snapshot.get("models", []))
             ]
         else:
-            all_models = get_opencode_models()
-            rows = [(model["id"], PROTOCOL_NO_SCRAPE_DATA) for model in all_models]
+            api_models = read_api_models_cache()
+            if api_models is not None:
+                rows = [
+                    (model.get("id") or "?", PROTOCOL_NO_SCRAPE_DATA)
+                    for model in api_models
+                    if isinstance(model, dict)
+                ]
+            else:
+                rows = None
+        if rows is None:
+            if json_:
+                click.echo("[]")
+            else:
+                click.echo(
+                    "No OpenCode Go model data saved yet. "
+                    "Run `llm opencode detail` once to fetch and save it "
+                    "(the only command that hits the network)."
+                )
+            return
         if json_:
             click.echo(
                 json.dumps(
@@ -82,7 +99,7 @@ def register_commands(cli):
         default=DEFAULT_PLAN,
         help=(
             "Plan to show pricing and rate limits for "
-            "(JSON always carries both plans; the filter only changes their order)"
+            "(JSON always carries both plans and ignores this filter)"
         ),
     )
     @click.option(
@@ -128,7 +145,9 @@ def register_commands(cli):
             "pricing": format_unified_pricing,
         }
         if format_ == "json":
-            routes = sort_models(routes, sort_by, plan=plan)
+            # JSON is unaffected by --plan: it always carries both plans and
+            # its order is defined without reference to the filter.
+            routes = sort_models(routes, sort_by)
             result = format_unified_json(
                 routes,
                 warnings=[
@@ -143,9 +162,21 @@ def register_commands(cli):
             if format_ != "pricing":
                 routes = sort_models(routes, sort_by, plan=plan)
             result = formatters[format_](routes, plan=plan)
-            banner = _stale_banner(snapshot.get("scraped_at"))
-            if format_ == "table" and banner:
-                result = f"{banner}\n\n{result}"
+            if format_ == "table":
+                blocks = []
+                banner = _stale_banner(snapshot.get("scraped_at"))
+                if banner:
+                    blocks.append(banner)
+                warnings = [
+                    *snapshot.get("warnings", []),
+                    *corroboration_warnings(routes),
+                ]
+                if warnings:
+                    blocks.append(
+                        "Warnings:\n" + "\n".join(f"  {w}" for w in warnings)
+                    )
+                if blocks:
+                    result = "\n\n".join([*blocks, result])
 
         if output:
             with open(output, "w", encoding="utf-8") as file:
@@ -157,22 +188,23 @@ def register_commands(cli):
     models.add_command(detail)
 
 
-def _plan_pricing(model, plan=DEFAULT_PLAN):
-    pricing = model.get("pricing", {})
-    if isinstance(pricing, dict):
-        block = pricing.get(plan) or next(iter(pricing.values()), None)
+def _plan_block_with_fallback(container, plan):
+    """Plan block lookup with tolerance: when the plan key is absent (or
+    empty) the first block in the container stands in; ``{}`` when there is
+    nothing usable at all."""
+    if isinstance(container, dict):
+        block = container.get(plan) or next(iter(container.values()), None)
         if isinstance(block, dict):
             return block
     return {}
+
+
+def _plan_pricing(model, plan=DEFAULT_PLAN):
+    return _plan_block_with_fallback(model.get("pricing"), plan)
 
 
 def _plan_rate_limits(model, plan=DEFAULT_PLAN):
-    rate_limits = model.get("rate_limits", {})
-    if isinstance(rate_limits, dict):
-        block = rate_limits.get(plan) or next(iter(rate_limits.values()), None)
-        if isinstance(block, dict):
-            return block
-    return {}
+    return _plan_block_with_fallback(model.get("rate_limits"), plan)
 
 
 def _plan_block(container, plan):
@@ -239,11 +271,8 @@ def _stale_since(scraped_at):
     """ISO timestamp of the snapshot's age origin, only when it passed the
     24-hour refresh timeout (``None`` when the snapshot is fresh or has no
     usable ``scraped_at``)."""
-    try:
-        age = time.time() - float(scraped_at)
-    except (TypeError, ValueError):
-        return None
-    if age <= UNIFIED_MODELS_CACHE_TIMEOUT:
+    age = snapshot_age(scraped_at)
+    if age is None or age <= UNIFIED_MODELS_CACHE_TIMEOUT:
         return None
     return datetime.fromtimestamp(float(scraped_at), tz=timezone.utc).isoformat()
 
@@ -430,10 +459,7 @@ def format_unified_pricing(models, plan=DEFAULT_PLAN):
     for model in models:
         name = model.get("model_id") or model.get("model_name") or "?"
         for current_plan in show_plans:
-            if plan == "all":
-                pricing = _plan_block(model.get("pricing"), current_plan)
-            else:
-                pricing = _plan_pricing(model, current_plan)
+            pricing, _rate_limits = _plan_selection(model, plan, current_plan)
             if pricing.get("input") is None:
                 continue
             label = f"{name} ({current_plan})" if plan == "all" else name

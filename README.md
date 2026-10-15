@@ -40,7 +40,8 @@ Alternatively, set the `OPENCODE_KEY` environment variable.
 
 ## Usage
 
-List available models:
+List available models (fully offline — reads the local snapshot, or the cached
+API model list when no snapshot has been scraped yet):
 
 ```bash
 llm opencode models
@@ -127,9 +128,15 @@ merged `models` list:
   and running `llm opencode detail` performs the scrape that repopulates it
   and re-registration picks models back up.
 
+- Plain listing (`llm opencode models`, or bare `llm opencode`) never touches
+  the network: it reads the snapshot (IDs + protocols), or the cached API model
+  list when no snapshot has ever been written (IDs with
+  `unknown (no scrape data)` protocol markers). A fresh install — neither file
+  present — prints a hint to run `llm opencode detail` instead.
+
 ## Available Models
 
-The model list is fetched dynamically from the OpenCode Go API. Run `llm opencode models` for the current list.
+The model list is served from the local snapshot or cache; run `llm opencode detail` to populate it (the only command that fetches).
 
 Available models broadly fall into two protocol groups:
 
