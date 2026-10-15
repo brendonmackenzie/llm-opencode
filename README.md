@@ -2,6 +2,9 @@
 
 An [LLM](https://llm.datasette.io/) plugin for [OpenCode Go](https://opencode.ai/docs/go/) subscription models.
 
+> [!WARNING]
+> This plugin is **alpha software**. The API and CLI surface may change without notice, and some features may be removed. Expect breaking changes between releases. Pin a commit in the install command if you need stability.
+
 ## Installation
 
 Since the plugin is not yet on PyPI, install it directly from GitHub using `uv tool install`:
