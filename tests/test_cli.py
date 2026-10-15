@@ -11,7 +11,7 @@ from llm_opencode import DocsScrapeError, sort_models
 
 
 @patch("llm_opencode.get_opencode_models")
-def test_llm_models(mock_get_models, make_opencode_models):
+def test_llm_models(mock_get_models, make_opencode_models, user_dir):
     mock_get_models.return_value = make_opencode_models("deepseek-v4-flash", "minimax-m3")
     runner = CliRunner()
     result = runner.invoke(cli, ["models", "list"])
@@ -19,7 +19,7 @@ def test_llm_models(mock_get_models, make_opencode_models):
 
 
 @patch("llm_opencode.get_opencode_models")
-def test_opencode_models_cli(mock_get_models):
+def test_opencode_models_cli(mock_get_models, user_dir):
     mock_get_models.return_value = [
         {"id": "glm-5"},
         {"id": "minimax-m3"},
@@ -34,7 +34,7 @@ def test_opencode_models_cli(mock_get_models):
 
 
 @patch("llm_opencode.get_opencode_models")
-def test_opencode_models_cli_does_not_fabricate_protocols(mock_get_models):
+def test_opencode_models_cli_does_not_fabricate_protocols(mock_get_models, user_dir):
     mock_get_models.return_value = [
         {"id": "gpt-6-luna"},
         {"id": "minimax-m3"},
@@ -49,7 +49,7 @@ def test_opencode_models_cli_does_not_fabricate_protocols(mock_get_models):
 
 
 @patch("llm_opencode.get_opencode_models")
-def test_opencode_models_cli_json(mock_get_models):
+def test_opencode_models_cli_json(mock_get_models, user_dir):
     mock_get_models.return_value = [
         {"id": "glm-5"},
         {"id": "minimax-m3"},
@@ -63,7 +63,7 @@ def test_opencode_models_cli_json(mock_get_models):
 
 
 @patch("llm_opencode.get_opencode_models")
-def test_opencode_models_cli_empty(mock_get_models):
+def test_opencode_models_cli_empty(mock_get_models, user_dir):
     mock_get_models.return_value = []
 
     runner = CliRunner()
@@ -73,7 +73,7 @@ def test_opencode_models_cli_empty(mock_get_models):
 
 
 @patch("llm_opencode.get_opencode_models")
-def test_opencode_models_cli_empty_json(mock_get_models):
+def test_opencode_models_cli_empty_json(mock_get_models, user_dir):
     mock_get_models.return_value = []
 
     runner = CliRunner()
@@ -83,7 +83,7 @@ def test_opencode_models_cli_empty_json(mock_get_models):
 
 
 @patch("llm_opencode.get_opencode_models")
-def test_opencode_default_to_models(mock_get_models):
+def test_opencode_default_to_models(mock_get_models, user_dir):
     mock_get_models.return_value = [{"id": "test-model"}]
 
     runner = CliRunner()

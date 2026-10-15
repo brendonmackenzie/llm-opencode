@@ -1,7 +1,20 @@
+import pathlib
+
+import llm
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from llm_opencode import OpenCodeGoAnthropicAsyncChat, OpenCodeGoAnthropicChat
+
+
+@pytest.fixture
+def user_dir(tmp_path, monkeypatch):
+    """Isolate the plugin's user dir so tests never read the machine's
+    real snapshot files."""
+    monkeypatch.setattr(
+        "llm_opencode.llm.user_dir", lambda: pathlib.Path(tmp_path)
+    )
+    return tmp_path
 
 
 @pytest.fixture

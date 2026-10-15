@@ -29,7 +29,7 @@ def _fake_chat_completion(content="Hello"):
 @patch("openai.OpenAI")
 @patch("llm.get_key", return_value="sk-test")
 @patch("llm_opencode.fetch_unified_models")
-def test_openai_protocol_prompt(mock_fetch, mock_get_key, mock_openai_cls):
+def test_openai_protocol_prompt(mock_fetch, mock_get_key, mock_openai_cls, user_dir):
     mock_fetch.return_value = _snapshot(
         {
             "model_id": "deepseek-v4-flash",
@@ -59,7 +59,7 @@ def test_openai_protocol_prompt(mock_fetch, mock_get_key, mock_openai_cls):
 @patch("llm_opencode.Anthropic")
 @patch("llm.get_key", return_value="sk-test")
 @patch("llm_opencode.fetch_unified_models")
-def test_anthropic_protocol_prompt(mock_fetch, mock_get_key, mock_anthropic_cls):
+def test_anthropic_protocol_prompt(mock_fetch, mock_get_key, mock_anthropic_cls, user_dir):
     mock_fetch.return_value = _snapshot(
         {
             "model_id": "minimax-m3",

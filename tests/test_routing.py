@@ -256,7 +256,7 @@ def test_registration_module_has_no_model_id_lists():
         assert not hasattr(routing, name), name
 
 
-def test_register_models_routes_from_snapshot_entries():
+def test_register_models_routes_from_snapshot_entries(user_dir):
     with (
         patch("llm.get_key", return_value="sk-test"),
         patch("llm_opencode.fetch_unified_models") as mock_fetch,

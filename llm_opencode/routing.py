@@ -140,13 +140,15 @@ def unregistered_routes(routes):
 def register_models(register):
     """Register models from the unified snapshot, routed by endpoint path.
 
+    Registration serves the snapshot file whatever its age and never scrapes
+    for it; only when no snapshot has ever been written does it run a single
+    blocking bootstrap scrape (failure to bootstrap registers nothing).
     Models the snapshot cannot vouch for are skipped, never guessed: no docs
     row → ``protocol unknown: no docs row``; a Google-style resource path →
     ``unsupported protocol: google-style``. Corroboration disagreement warns
     (it surfaces in ``detail``) but never vetoes — registration prints nothing.
     """
     from llm_opencode import (
-        DocsScrapeError,
         OpenCodeGoAnthropicAsyncChat,
         OpenCodeGoAnthropicChat,
         OpenCodeGoAsyncChat,
@@ -154,15 +156,18 @@ def register_models(register):
         OpenCodeGoResponsesAsyncChat,
         OpenCodeGoResponsesChat,
         fetch_unified_models,
+        read_snapshot,
     )
 
     key = llm.get_key("", "opencode", "OPENCODE_KEY")
     if not key:
         return
-    try:
-        snapshot = fetch_unified_models()
-    except DocsScrapeError:
-        return
+    snapshot = read_snapshot()
+    if snapshot is None:
+        try:
+            snapshot = fetch_unified_models()
+        except Exception:
+            return
     entries = snapshot.get("models", []) if isinstance(snapshot, dict) else snapshot
     for route in analyze_routes(entries):
         if not route["registered"]:

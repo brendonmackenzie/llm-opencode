@@ -47,6 +47,8 @@ from .unified import (
     fetch_unified_models,
     get_opencode_models,
     merge_model_data,
+    read_snapshot,
+    scrape_snapshot,
 )
 
 __all__ = [
@@ -80,8 +82,10 @@ __all__ = [
     "merge_model_data",
     "parse_docs_tables",
     "parse_html_tables",
+    "read_snapshot",
     "register_commands",
     "register_models",
+    "scrape_snapshot",
     "sort_models",
     "unregistered_routes",
 ]
