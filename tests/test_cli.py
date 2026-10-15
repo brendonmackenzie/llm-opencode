@@ -29,21 +29,22 @@ def test_opencode_models_cli(mock_get_models):
     assert result.exit_code == 0, result.output
     assert "glm-5" in result.output
     assert "minimax-m3" in result.output
-    assert "openai" in result.output
-    assert "anthropic" in result.output
+    assert "unknown (no scrape data)" in result.output
 
 
 @patch("llm_opencode.get_opencode_models")
-def test_opencode_models_cli_responses_protocol(mock_get_models):
+def test_opencode_models_cli_does_not_fabricate_protocols(mock_get_models):
     mock_get_models.return_value = [
         {"id": "gpt-6-luna"},
+        {"id": "minimax-m3"},
     ]
 
     runner = CliRunner()
     result = runner.invoke(cli, ["opencode", "models"])
     assert result.exit_code == 0, result.output
-    assert "openai-responses" in result.output
-    assert "/v1/responses" in result.output
+    assert "openai" not in result.output
+    assert "anthropic" not in result.output
+    assert "/v1/responses" not in result.output
 
 
 @patch("llm_opencode.get_opencode_models")
@@ -296,6 +297,81 @@ def test_opencode_models_detail_json_surfaces_scrape_warnings(mock_fetch):
     assert data["meta"]["warnings"] == [
         "table 3: unrecognized table shape: ['model', 'fallbacks']"
     ]
+
+
+@patch("llm_opencode.fetch_unified_models")
+def test_opencode_models_detail_json_unregistered_section(mock_fetch):
+    models = _unified_models() + [
+        {
+            "model_id": "omen-alpha",
+            "model_name": "Omen Alpha",
+            "provider": "opencode",
+            "created": 999,
+            "matched": False,
+            "endpoint": "",
+            "ai_sdk_package": "",
+            "model_training": "",
+            "data_retention": "",
+            "pricing": {},
+            "rate_limits": {},
+        },
+        {
+            "model_id": "gemini-4-argon-contributor",
+            "model_name": "Gemini 4 Argon Contributor",
+            "provider": "opencode",
+            "created": 1000,
+            "matched": True,
+            "endpoint": "https://opencode.ai/inference/go/v1/models/gemini-4-argon-contributor",
+            "ai_sdk_package": "@ai-sdk/google",
+            "model_training": "",
+            "data_retention": "",
+            "pricing": {},
+            "rate_limits": {},
+        },
+    ]
+    mock_fetch.return_value = _snapshot(models)
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["opencode", "models", "detail", "--format", "json"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["count"] == 4
+    assert [
+        (u["model_id"], u["skip_reason"], u["protocol"])
+        for u in data["unregistered"]
+    ] == [
+        ("omen-alpha", "protocol unknown: no docs row", None),
+        (
+            "gemini-4-argon-contributor",
+            "unsupported protocol: google-style",
+            None,
+        ),
+    ]
+    by_id = {m["model_id"]: m for m in data["models"]}
+    assert by_id["grok-4.5"]["protocol"] == "openai-responses"
+    assert by_id["grok-4.5"]["registered"] is True
+    assert by_id["omen-alpha"]["registered"] is False
+    assert by_id["omen-alpha"]["skip_reason"] == "protocol unknown: no docs row"
+
+
+@patch("llm_opencode.fetch_unified_models")
+def test_opencode_models_detail_json_package_mismatch_warns_not_vetoes(mock_fetch):
+    models = _unified_models()
+    models[0]["ai_sdk_package"] = "@ai-sdk/google"
+    mock_fetch.return_value = _snapshot(models)
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["opencode", "models", "detail", "--format", "json"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["meta"]["warnings"] == [
+        'protocol corroboration: grok-4.5 endpoint path resolves openai-responses '
+        'but ai_sdk_package is "@ai-sdk/google"'
+    ]
+    assert data["unregistered"] == []
+    by_id = {m["model_id"]: m for m in data["models"]}
+    assert by_id["grok-4.5"]["registered"] is True
+    assert by_id["grok-4.5"]["protocol"] == "openai-responses"
 
 
 @patch("llm_opencode.fetch_unified_models")

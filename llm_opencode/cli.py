@@ -6,7 +6,7 @@ import click
 import llm
 
 from .docs_scraper import DOCS_PAGE_URL, DocsScrapeError
-from .routing import _get_protocol
+from .routing import analyze_routes, corroboration_warnings, unregistered_routes
 from .unified import MODELS_URL
 
 DEFAULT_PLAN = "go"
@@ -35,18 +35,8 @@ def register_commands(cli):
             click.echo(json.dumps(all_models, indent=2))
         else:
             for model in all_models:
-                model_id = model["id"]
-                protocol = _get_protocol(model_id)
-                endpoint = (
-                    "/v1/chat/completions"
-                    if protocol == "openai"
-                    else "/v1/responses"
-                    if protocol == "openai-responses"
-                    else "/v1/messages"
-                )
-                click.echo(f"- id: {model_id}")
-                click.echo(f"  protocol: {protocol}")
-                click.echo(f"  endpoint: https://opencode.ai/zen/go{endpoint}")
+                click.echo(f"- id: {model['id']}")
+                click.echo("  protocol: unknown (no scrape data)")
                 click.echo()
 
     @models.command()
@@ -104,10 +94,15 @@ def register_commands(cli):
         }
         if format_ == "json":
             unified = sort_models(unified, sort_by)
+            routes = analyze_routes(unified)
             result = format_unified_json(
-                unified,
-                warnings=snapshot.get("warnings", []),
+                routes,
+                warnings=[
+                    *snapshot.get("warnings", []),
+                    *corroboration_warnings(routes),
+                ],
                 scraped_at=snapshot.get("scraped_at"),
+                unregistered=unregistered_routes(routes),
             )
         else:
             if format_ != "pricing":
@@ -190,14 +185,24 @@ def sort_models(models, sort_by="requests"):
     return sorted(models, key=keys[sort_by])
 
 
-def format_unified_json(models, warnings=None, scraped_at=None):
-    """Format unified models as JSON with metadata."""
+def format_unified_json(
+    models, warnings=None, scraped_at=None, unregistered=None
+):
+    """Format unified models as JSON with metadata and an unregistered section."""
     meta = {
         "sources": [MODELS_URL, DOCS_PAGE_URL],
         "scraped_at": scraped_at,
         "warnings": warnings or [],
     }
-    return json.dumps({"count": len(models), "models": models, "meta": meta}, indent=2)
+    return json.dumps(
+        {
+            "count": len(models),
+            "models": models,
+            "unregistered": unregistered or [],
+            "meta": meta,
+        },
+        indent=2,
+    )
 
 
 def _fmt_price(value):
