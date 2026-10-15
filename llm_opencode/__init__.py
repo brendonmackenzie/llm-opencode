@@ -28,14 +28,16 @@ from .docs_scraper import (
 )
 
 from .routing import (
-    ANTHROPIC_PROTOCOL_MODELS,
     BASE_URL_ANTHROPIC,
     BASE_URL_OPENAI,
-    OPENAI_PROTOCOL_MODELS,
-    OPENAI_RESPONSES_PROTOCOL_MODELS,
-    UNKNOWN_MODELS_DEFAULT,
-    _get_protocol,
+    SKIP_GOOGLE_STYLE,
+    SKIP_NO_DOCS_ROW,
+    SKIP_UNRECOGNIZED_PATH,
+    analyze_routes,
+    corroboration_warnings,
+    derive_route,
     register_models,
+    unregistered_routes,
 )
 from .unified import (
     MODELS_URL,
@@ -48,16 +50,15 @@ from .unified import (
 )
 
 __all__ = [
-    "ANTHROPIC_PROTOCOL_MODELS",
     "BASE_URL_ANTHROPIC",
     "BASE_URL_OPENAI",
     "DOCS_PAGE_URL",
-    "DownloadError",
     "DocsScrapeError",
+    "DownloadError",
     "MODELS_URL",
-    "OPENAI_PROTOCOL_MODELS",
-    "OPENAI_RESPONSES_PROTOCOL_MODELS",
-    "UNKNOWN_MODELS_DEFAULT",
+    "SKIP_GOOGLE_STYLE",
+    "SKIP_NO_DOCS_ROW",
+    "SKIP_UNRECOGNIZED_PATH",
     "UNIFIED_MODELS_CACHE_TIMEOUT",
     "OpenCodeGoAnthropicAsyncChat",
     "OpenCodeGoAnthropicChat",
@@ -65,7 +66,9 @@ __all__ = [
     "OpenCodeGoChat",
     "OpenCodeGoResponsesAsyncChat",
     "OpenCodeGoResponsesChat",
-    "_get_protocol",
+    "analyze_routes",
+    "corroboration_warnings",
+    "derive_route",
     "fetch_cached_json",
     "fetch_docs_page",
     "fetch_unified_models",
@@ -80,6 +83,7 @@ __all__ = [
     "register_commands",
     "register_models",
     "sort_models",
+    "unregistered_routes",
 ]
 
 _SESSION_ID: contextvars.ContextVar = contextvars.ContextVar(
@@ -202,11 +206,12 @@ class _OpenCodeGoAnthropicChatBase:
     key_env_var = "OPENCODE_KEY"
     can_stream = True
 
-    def __init__(self, model_id, anthropic_model_id=None):
+    def __init__(self, model_id, anthropic_model_id=None, api_base=None):
         self.model_id = model_id
         self.anthropic_model_id = anthropic_model_id or model_id.replace(
             "opencode-go/", ""
         )
+        self.api_base = api_base or BASE_URL_ANTHROPIC
         self.attachment_types = set()
 
     class Options(llm.Options):
@@ -267,7 +272,7 @@ class OpenCodeGoAnthropicChat(_OpenCodeGoAnthropicChatBase, llm.KeyModel):
         session_id = _resolve_session_id(conversation)
         client = Anthropic(
             api_key=self.get_key(key),
-            base_url=BASE_URL_ANTHROPIC,
+            base_url=self.api_base,
             default_headers={"x-opencode-session": session_id},
         )
         kwargs = self._build_kwargs(prompt, conversation)
@@ -295,7 +300,7 @@ class OpenCodeGoAnthropicAsyncChat(_OpenCodeGoAnthropicChatBase, llm.AsyncKeyMod
         session_id = _resolve_session_id(conversation)
         client = AsyncAnthropic(
             api_key=self.get_key(key),
-            base_url=BASE_URL_ANTHROPIC,
+            base_url=self.api_base,
             default_headers={"x-opencode-session": session_id},
         )
         kwargs = self._build_kwargs(prompt, conversation)
