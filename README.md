@@ -107,9 +107,25 @@ llm opencode detail --sort-by model_id        # by model ID
 
 The `pricing` format always sorts by input price ascending.
 
-The unified data is cached locally for 24 hours. If the OpenCode docs page
-cannot be fetched, the command prints a message with a link to the docs page
-instead.
+### Snapshot resilience
+
+Model metadata is served from a single snapshot file, `opencode_unified_models.json`
+in the llm user dir, whose payload carries `scraped_at`, scrape `warnings`, and the
+merged `models` list:
+
+- `llm opencode detail` is the sole refresh point. Its 24-hour timeout decides
+  only whether a fresh docs scrape is *attempted*: a fresh snapshot is served
+  as-is, and an expired-but-present snapshot gets one refresh attempt — when
+  the attempt fails (for example with networking disabled), the last-good
+  snapshot is served with a staleness banner. Only when no snapshot file has
+  ever been written does `llm opencode detail` fail with a link to the docs
+  page.
+- Model registration never scrapes (the snapshot is served whatever its age,
+  and prints nothing), except for a one-time blocking bootstrap scrape the
+  very first time no snapshot file exists; if the bootstrap fails, no models
+  are registered. Delete the snapshot file (or install on a fresh machine)
+  and running `llm opencode detail` performs the scrape that repopulates it
+  and re-registration picks models back up.
 
 ## Available Models
 

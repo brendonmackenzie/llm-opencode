@@ -1,17 +1,25 @@
 import csv
 import io
 import json
+import time
+from datetime import datetime, timezone
 
 import click
 import llm
 
 from .docs_scraper import DOCS_PAGE_URL, DocsScrapeError
 from .routing import analyze_routes, corroboration_warnings, unregistered_routes
-from .unified import MODELS_URL
+from .unified import (
+    MODELS_URL,
+    UNIFIED_MODELS_CACHE_TIMEOUT,
+    DownloadError,
+    read_snapshot,
+)
 
 DEFAULT_PLAN = "go"
 PLANS = ("go", "go_plus")
 PROTOCOL_UNKNOWN = "unknown"
+PROTOCOL_NO_SCRAPE_DATA = "unknown (no scrape data)"
 
 
 @llm.hookimpl
@@ -32,13 +40,29 @@ def register_commands(cli):
             return
         from llm_opencode import get_opencode_models
 
-        all_models = get_opencode_models()
-        if json_:
-            click.echo(json.dumps(all_models, indent=2))
+        snapshot = read_snapshot()
+        if snapshot is not None:
+            rows = [
+                (
+                    route.get("model_id") or "?",
+                    route.get("protocol") or PROTOCOL_NO_SCRAPE_DATA,
+                )
+                for route in analyze_routes(snapshot.get("models", []))
+            ]
         else:
-            for model in all_models:
-                click.echo(f"- id: {model['id']}")
-                click.echo("  protocol: unknown (no scrape data)")
+            all_models = get_opencode_models()
+            rows = [(model["id"], PROTOCOL_NO_SCRAPE_DATA) for model in all_models]
+        if json_:
+            click.echo(
+                json.dumps(
+                    [{"id": model_id, "protocol": protocol} for model_id, protocol in rows],
+                    indent=2,
+                )
+            )
+        else:
+            for model_id, protocol in rows:
+                click.echo(f"- id: {model_id}")
+                click.echo(f"  protocol: {protocol}")
                 click.echo()
 
     @opencode.command()
@@ -76,13 +100,14 @@ def register_commands(cli):
 
         try:
             snapshot = fetch_unified_models()
-        except DocsScrapeError:
+        except (DocsScrapeError, DownloadError):
             click.echo(
                 "OpenCode Go page scraping failed. Please click here for more details:"
             )
             click.echo(DOCS_PAGE_URL)
             raise click.exceptions.Exit(1)
 
+        stale_since = _stale_since(snapshot.get("scraped_at"))
         unified = snapshot.get("models", [])
         if model_id:
             query = model_id.lower()
@@ -112,11 +137,15 @@ def register_commands(cli):
                 ],
                 scraped_at=snapshot.get("scraped_at"),
                 unregistered=unregistered_routes(routes),
+                stale_since=stale_since,
             )
         else:
             if format_ != "pricing":
                 routes = sort_models(routes, sort_by, plan=plan)
             result = formatters[format_](routes, plan=plan)
+            banner = _stale_banner(snapshot.get("scraped_at"))
+            if format_ == "table" and banner:
+                result = f"{banner}\n\n{result}"
 
         if output:
             with open(output, "w", encoding="utf-8") as file:
@@ -206,8 +235,34 @@ def sort_models(models, sort_by="requests", plan=DEFAULT_PLAN):
     return sorted(models, key=keys[sort_by])
 
 
+def _stale_since(scraped_at):
+    """ISO timestamp of the snapshot's age origin, only when it passed the
+    24-hour refresh timeout (``None`` when the snapshot is fresh or has no
+    usable ``scraped_at``)."""
+    try:
+        age = time.time() - float(scraped_at)
+    except (TypeError, ValueError):
+        return None
+    if age <= UNIFIED_MODELS_CACHE_TIMEOUT:
+        return None
+    return datetime.fromtimestamp(float(scraped_at), tz=timezone.utc).isoformat()
+
+
+def _stale_banner(scraped_at):
+    """One-line staleness warning for table output; ``None`` when fresh."""
+    stale_since = _stale_since(scraped_at)
+    if stale_since is None:
+        return None
+    age_hours = (time.time() - float(scraped_at)) / 3600
+    return (
+        f"⚠ Snapshot is stale: {age_hours:.1f} hours old (last scraped "
+        f"{stale_since}). The docs page was unreachable at the last refresh "
+        "attempt — showing the saved snapshot."
+    )
+
+
 def format_unified_json(
-    models, warnings=None, scraped_at=None, unregistered=None
+    models, warnings=None, scraped_at=None, unregistered=None, stale_since=None
 ):
     """Format unified models as JSON with metadata and an unregistered section."""
     meta = {
@@ -215,6 +270,8 @@ def format_unified_json(
         "scraped_at": scraped_at,
         "warnings": warnings or [],
     }
+    if stale_since is not None:
+        meta["stale_since"] = stale_since
     return json.dumps(
         {
             "count": len(models),

@@ -115,27 +115,43 @@ def _snapshot(models, warnings):
     }
 
 
-def fetch_unified_models():
-    """Fetch API and docs model data, merged into a unified snapshot.
+def _snapshot_path():
+    return llm.user_dir() / "opencode_unified_models.json"
 
-    The snapshot payload is ``{"scraped_at", "warnings", "models"}``, cached
-    for 24 hours. Raises DocsScrapeError if the docs page cannot be fetched
-    or no docs table matches any known header contract.
+
+def read_snapshot():
+    """Read the last-good snapshot file without touching the network.
+
+    Returns ``None`` when no snapshot has ever been written, or when the file
+    is missing, unreadable, or not shaped like a snapshot.
     """
-    import llm_opencode as _root
-
-    cache_path = llm.user_dir() / "opencode_unified_models.json"
-    if (
-        cache_path.is_file()
-        and time.time() - cache_path.stat().st_mtime < UNIFIED_MODELS_CACHE_TIMEOUT
-    ):
+    path = _snapshot_path()
+    if path.is_file():
         try:
-            with open(cache_path) as file:
+            with open(path) as file:
                 cached = json.load(file)
             if isinstance(cached, dict) and "models" in cached:
                 return cached
         except (json.JSONDecodeError, OSError):
             pass
+    return None
+
+
+def _snapshot_is_fresh(snapshot):
+    scraped_at = snapshot.get("scraped_at", 0)
+    try:
+        age = time.time() - float(scraped_at)
+    except (TypeError, ValueError):
+        return False
+    return age < UNIFIED_MODELS_CACHE_TIMEOUT
+
+
+def scrape_snapshot():
+    """Scrape the API model list and docs page fresh, persist, and return
+    the unified snapshot. Raises DocsScrapeError (docs fetch or no contract
+    table matched) or DownloadError (models list fetch) on failure.
+    """
+    import llm_opencode as _root
 
     api_models = _root.get_opencode_models()
     tables = parse_html_tables(_root.fetch_docs_page())
@@ -143,8 +159,29 @@ def fetch_unified_models():
     unified = merge_model_data(api_models, docs_data)
     snapshot = _snapshot(unified, warnings)
 
+    cache_path = _snapshot_path()
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     with open(cache_path, "w") as file:
         json.dump(snapshot, file)
 
     return snapshot
+
+
+def fetch_unified_models():
+    """Serve the unified snapshot, refreshing it only when warranted.
+
+    The snapshot payload is ``{"scraped_at", "warnings", "models"}``. The 24
+    hour timeout gates refresh attempts only: a fresh snapshot is served as
+    is, an expired-but-present snapshot gets one refresh attempt and is
+    served with its age when the attempt fails, and a missing snapshot gets
+    one full scrape whose failures (DocsScrapeError, DownloadError) raise.
+    """
+    snapshot = read_snapshot()
+    if snapshot is None:
+        return scrape_snapshot()
+    if _snapshot_is_fresh(snapshot):
+        return snapshot
+    try:
+        return scrape_snapshot()
+    except Exception:
+        return snapshot

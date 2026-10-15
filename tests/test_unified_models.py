@@ -1,5 +1,6 @@
 import json
 import os
+import time
 from unittest.mock import patch
 
 import pytest
@@ -159,7 +160,11 @@ def _api_models():
 
 
 def test_fetch_unified_models_uses_fresh_snapshot_cache(tmp_path):
-    snapshot = {"scraped_at": 42, "warnings": [], "models": [{"model_id": "grok-4.5"}]}
+    snapshot = {
+        "scraped_at": int(time.time()),
+        "warnings": [],
+        "models": [{"model_id": "grok-4.5"}],
+    }
     cache_file = tmp_path / "opencode_unified_models.json"
     cache_file.write_text(json.dumps(snapshot))
 

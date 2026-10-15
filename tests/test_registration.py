@@ -49,7 +49,7 @@ def test_register_models_no_key(mock_get_key):
 @patch("llm_opencode.fetch_unified_models")
 @patch("llm.get_key", return_value="sk-test")
 def test_register_models_snapshot_failure_registers_nothing(
-    mock_get_key, mock_fetch
+    mock_get_key, mock_fetch, user_dir
 ):
     mock_fetch.side_effect = DocsScrapeError("boom")
 
@@ -61,7 +61,7 @@ def test_register_models_snapshot_failure_registers_nothing(
 
 @patch("llm_opencode.fetch_unified_models")
 @patch("llm.get_key", return_value="sk-test")
-def test_register_models_empty_snapshot(mock_get_key, mock_fetch):
+def test_register_models_empty_snapshot(mock_get_key, mock_fetch, user_dir):
     mock_fetch.return_value = _snapshot()
 
     register = MagicMock()
@@ -72,7 +72,7 @@ def test_register_models_empty_snapshot(mock_get_key, mock_fetch):
 
 @patch("llm_opencode.fetch_unified_models")
 @patch("llm.get_key", return_value="sk-test")
-def test_register_models_routes_by_endpoint(mock_get_key, mock_fetch):
+def test_register_models_routes_by_endpoint(mock_get_key, mock_fetch, user_dir):
     mock_fetch.return_value = _snapshot(
         _entry("glm-5", CHAT_ENDPOINT, "@ai-sdk/openai-compatible"),
         _entry("minimax-m3", ANTHROPIC_ENDPOINT, "@ai-sdk/anthropic"),
@@ -106,7 +106,7 @@ def test_register_models_routes_by_endpoint(mock_get_key, mock_fetch):
 @patch("llm_opencode.fetch_unified_models")
 @patch("llm.get_key", return_value="sk-test")
 def test_register_models_skips_no_docs_row_and_google_style(
-    mock_get_key, mock_fetch
+    mock_get_key, mock_fetch, user_dir
 ):
     mock_fetch.return_value = _snapshot(
         _entry("omen-alpha", "", ""),
@@ -128,7 +128,7 @@ def test_register_models_skips_no_docs_row_and_google_style(
 @patch("llm_opencode.fetch_unified_models")
 @patch("llm.get_key", return_value="sk-test")
 def test_register_models_package_mismatch_warns_but_registers(
-    mock_get_key, mock_fetch
+    mock_get_key, mock_fetch, user_dir
 ):
     mock_fetch.return_value = _snapshot(
         _entry("glm-5", CHAT_ENDPOINT, "@ai-sdk/google")
@@ -144,7 +144,7 @@ def test_register_models_package_mismatch_warns_but_registers(
 @patch("llm_opencode.fetch_unified_models")
 @patch("llm.get_key", return_value="sk-test")
 def test_register_models_variation_key_registers_inherited_route(
-    mock_get_key, mock_fetch
+    mock_get_key, mock_fetch, user_dir
 ):
     mock_fetch.return_value = _snapshot(
         _entry("grok-4.7#le-200k-tokens", RESPONSES_ENDPOINT, "@ai-sdk/openai")
@@ -160,7 +160,7 @@ def test_register_models_variation_key_registers_inherited_route(
 @patch("llm_opencode.fetch_unified_models")
 @patch("llm.get_key", return_value="sk-test")
 def test_register_models_novel_model_ids_need_no_hardcoded_list(
-    mock_get_key, mock_fetch
+    mock_get_key, mock_fetch, user_dir
 ):
     mock_fetch.return_value = _snapshot(
         _entry("brand-new-model-99", CHAT_ENDPOINT, "")
