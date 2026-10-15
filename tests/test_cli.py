@@ -99,37 +99,65 @@ def _unified_models():
             "model_name": "Grok 4.5",
             "provider": "opencode",
             "created": 123,
-            "endpoint": "https://opencode.ai/zen/go/v1/responses",
+            "matched": True,
+            "endpoint": "https://opencode.ai/inference/go/v1/responses",
             "ai_sdk_package": "@ai-sdk/openai",
             "model_training": "Not used",
             "data_retention": "30 days",
             "pricing": {
-                "input": 2.0, "output": 6.0, "cached_read": 0.3,
-                "cached_write": None, "usage": 15.0, "currency": "USD",
+                "go": {
+                    "input": 2.0, "output": 6.0, "cached_read": 0.3,
+                    "cached_write": None, "monthly_limit": 15.0,
+                    "limit_note": None, "currency": "USD",
+                },
+                "go_plus": {
+                    "input": 2.0, "output": 6.0, "cached_read": 0.3,
+                    "cached_write": None, "monthly_limit": 45.0,
+                    "limit_note": None, "currency": "USD",
+                },
             },
-            "rate_limits": {"per_5_hours": "120", "per_week": "300", "per_month": "600"},
+            "rate_limits": {
+                "go": {"per_5_hours": "120", "per_week": "300", "per_month": "600"},
+                "go_plus": {"per_5_hours": "360", "per_week": "900", "per_month": "1800"},
+            },
         },
         {
             "model_id": "minimax-m3",
             "model_name": "MiniMax M3",
             "provider": "opencode",
             "created": 456,
-            "endpoint": "https://opencode.ai/zen/go/v1/messages",
+            "matched": True,
+            "endpoint": "https://opencode.ai/inference/go/v1/messages",
             "ai_sdk_package": "@ai-sdk/anthropic",
             "model_training": "Not used",
             "data_retention": "60 days",
             "pricing": {
-                "input": 0.3, "output": 1.2, "cached_read": 0.06,
-                "cached_write": None, "usage": 60.0, "currency": "USD",
+                "go": {
+                    "input": 0.3, "output": 1.2, "cached_read": 0.06,
+                    "cached_write": None, "monthly_limit": 60.0,
+                    "limit_note": "limited time", "currency": "USD",
+                },
+                "go_plus": {
+                    "input": 0.3, "output": 1.2, "cached_read": 0.06,
+                    "cached_write": None, "monthly_limit": 180.0,
+                    "limit_note": "limited time", "currency": "USD",
+                },
             },
-            "rate_limits": {"per_5_hours": "3200", "per_week": "8000", "per_month": "16000"},
+            "rate_limits": {
+                "go": {"per_5_hours": "3200", "per_week": "8000", "per_month": "16000"},
+                "go_plus": {"per_5_hours": "9600", "per_week": "24000", "per_month": "48000"},
+            },
         },
     ]
 
 
+def _snapshot(models):
+    return {"scraped_at": 1700000000, "warnings": [], "models": models}
+
+
 @patch("llm_opencode.fetch_unified_models")
 def test_opencode_models_detail_default_table(mock_fetch):
-    mock_fetch.return_value = _unified_models()
+    mock_fetch.return_value = _snapshot(_unified_models())
 
     runner = CliRunner()
     result = runner.invoke(cli, ["opencode", "models", "detail"])
@@ -139,7 +167,7 @@ def test_opencode_models_detail_default_table(mock_fetch):
     assert "minimax-m3" in result.output
     assert "$2.00" in result.output
     assert "30 days" in result.output
-    assert "Usage" in result.output
+    assert "Limit" in result.output
     assert "$15.00" in result.output
     assert "$60.00" in result.output
     assert "Req/Month" in result.output
@@ -150,7 +178,7 @@ def test_opencode_models_detail_default_table(mock_fetch):
 
 @patch("llm_opencode.fetch_unified_models")
 def test_opencode_models_detail_default_sort_requests(mock_fetch):
-    mock_fetch.return_value = _unified_models()
+    mock_fetch.return_value = _snapshot(_unified_models())
 
     runner = CliRunner()
     result = runner.invoke(cli, ["opencode", "models", "detail"])
@@ -160,7 +188,7 @@ def test_opencode_models_detail_default_sort_requests(mock_fetch):
 
 @patch("llm_opencode.fetch_unified_models")
 def test_opencode_models_detail_sort_by_usage(mock_fetch):
-    mock_fetch.return_value = _unified_models()
+    mock_fetch.return_value = _snapshot(_unified_models())
 
     runner = CliRunner()
     result = runner.invoke(cli, ["opencode", "models", "detail", "--sort-by", "usage"])
@@ -170,7 +198,7 @@ def test_opencode_models_detail_sort_by_usage(mock_fetch):
 
 @patch("llm_opencode.fetch_unified_models")
 def test_opencode_models_detail_sort_by_name(mock_fetch):
-    mock_fetch.return_value = _unified_models()
+    mock_fetch.return_value = _snapshot(_unified_models())
 
     runner = CliRunner()
     result = runner.invoke(cli, ["opencode", "models", "detail", "--sort-by", "name"])
@@ -187,18 +215,22 @@ def test_opencode_models_detail_requests_missing_pinned_last(mock_fetch):
             "model_name": "Hy3 Preview",
             "provider": "opencode",
             "created": 789,
+            "matched": True,
             "endpoint": "",
             "ai_sdk_package": "",
             "model_training": "",
             "data_retention": "",
             "pricing": {
-                "input": 0.1, "output": 0.2, "cached_read": None,
-                "cached_write": None, "usage": None, "currency": "USD",
+                "go": {
+                    "input": 0.1, "output": 0.2, "cached_read": None,
+                    "cached_write": None, "monthly_limit": None,
+                    "limit_note": None, "currency": "USD",
+                }
             },
-            "rate_limits": {"per_5_hours": "", "per_week": "", "per_month": ""},
+            "rate_limits": {"go": {"per_5_hours": "", "per_week": "", "per_month": ""}},
         }
     )
-    mock_fetch.return_value = models
+    mock_fetch.return_value = _snapshot(models)
 
     runner = CliRunner()
     result = runner.invoke(cli, ["opencode", "models", "detail"])
@@ -212,17 +244,17 @@ def test_opencode_models_detail_requests_sort_order(mock_fetch):
         {
             "model_id": "model-a",
             "model_name": "Model A",
-            "pricing": {"input": 1.0, "usage": 15.0},
-            "rate_limits": {"per_month": "3000"},
+            "pricing": {"go": {"input": 1.0, "monthly_limit": 15.0}},
+            "rate_limits": {"go": {"per_month": "3000"}},
         },
         {
             "model_id": "model-b",
             "model_name": "Model B",
-            "pricing": {"input": 0.5, "usage": 20.0},
-            "rate_limits": {"per_month": "4000"},
+            "pricing": {"go": {"input": 0.5, "monthly_limit": 20.0}},
+            "rate_limits": {"go": {"per_month": "4000"}},
         },
     ]
-    mock_fetch.return_value = models
+    mock_fetch.return_value = _snapshot(models)
 
     runner = CliRunner()
     result = runner.invoke(cli, ["opencode", "models", "detail"])
@@ -232,7 +264,7 @@ def test_opencode_models_detail_requests_sort_order(mock_fetch):
 
 @patch("llm_opencode.fetch_unified_models")
 def test_opencode_models_detail_json(mock_fetch):
-    mock_fetch.return_value = _unified_models()
+    mock_fetch.return_value = _snapshot(_unified_models())
 
     runner = CliRunner()
     result = runner.invoke(cli, ["opencode", "models", "detail", "--format", "json"])
@@ -240,13 +272,35 @@ def test_opencode_models_detail_json(mock_fetch):
     data = json.loads(result.output)
     assert data["count"] == 2
     assert [m["model_id"] for m in data["models"]] == ["minimax-m3", "grok-4.5"]
-    assert data["models"][0]["pricing"]["input"] == 0.3
+    assert data["models"][0]["pricing"]["go"]["input"] == 0.3
+    assert data["models"][0]["pricing"]["go_plus"]["monthly_limit"] == 180.0
+    assert data["models"][0]["matched"] is True
     assert "sources" in data["meta"]
+    assert data["meta"]["scraped_at"] == 1700000000
+    assert data["meta"]["warnings"] == []
+
+
+@patch("llm_opencode.fetch_unified_models")
+def test_opencode_models_detail_json_surfaces_scrape_warnings(mock_fetch):
+    mock_fetch.return_value = _snapshot(
+        [{"model_id": "grok-4.5", "pricing": {"go": {}}}]
+    )
+    mock_fetch.return_value["warnings"] = [
+        "table 3: unrecognized table shape: ['model', 'fallbacks']"
+    ]
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["opencode", "models", "detail", "--format", "json"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["meta"]["warnings"] == [
+        "table 3: unrecognized table shape: ['model', 'fallbacks']"
+    ]
 
 
 @patch("llm_opencode.fetch_unified_models")
 def test_opencode_models_detail_csv(mock_fetch):
-    mock_fetch.return_value = _unified_models()
+    mock_fetch.return_value = _snapshot(_unified_models())
 
     runner = CliRunner()
     result = runner.invoke(cli, ["opencode", "models", "detail", "--format", "csv"])
@@ -254,18 +308,21 @@ def test_opencode_models_detail_csv(mock_fetch):
 
     rows = list(csv.reader(io.StringIO(result.output)))
     assert rows[0] == [
-        "model_id", "model_name", "provider",
-        "input_price", "output_price", "cached_read", "cached_write", "usage",
+        "model_id", "model_name", "provider", "matched",
+        "input_price", "output_price", "cached_read", "cached_write",
+        "monthly_limit", "limit_note",
         "endpoint", "ai_sdk_package", "data_retention", "model_training",
         "rate_per_5h", "rate_per_week", "rate_per_month",
     ]
     assert rows[1][0] == "minimax-m3"
-    assert rows[1][3] == "0.3"
+    assert rows[1][4] == "0.3"
+    assert rows[1][8] == "60.0"
+    assert rows[1][9] == "limited time"
 
 
 @patch("llm_opencode.fetch_unified_models")
 def test_opencode_models_detail_pricing_sorted_by_input(mock_fetch):
-    mock_fetch.return_value = _unified_models()
+    mock_fetch.return_value = _snapshot(_unified_models())
 
     runner = CliRunner()
     result = runner.invoke(cli, ["opencode", "models", "detail", "--format", "pricing"])
@@ -275,7 +332,7 @@ def test_opencode_models_detail_pricing_sorted_by_input(mock_fetch):
 
 @patch("llm_opencode.fetch_unified_models")
 def test_opencode_models_detail_search_filter(mock_fetch):
-    mock_fetch.return_value = _unified_models()
+    mock_fetch.return_value = _snapshot(_unified_models())
 
     runner = CliRunner()
     result = runner.invoke(cli, ["opencode", "models", "detail", "--search", "grok"])
@@ -286,7 +343,7 @@ def test_opencode_models_detail_search_filter(mock_fetch):
 
 @patch("llm_opencode.fetch_unified_models")
 def test_opencode_models_detail_search_matches_name(mock_fetch):
-    mock_fetch.return_value = _unified_models()
+    mock_fetch.return_value = _snapshot(_unified_models())
 
     runner = CliRunner()
     result = runner.invoke(cli, ["opencode", "models", "detail", "--search", "minimax"])
@@ -297,7 +354,7 @@ def test_opencode_models_detail_search_matches_name(mock_fetch):
 
 @patch("llm_opencode.fetch_unified_models")
 def test_opencode_models_detail_provider_filter(mock_fetch):
-    mock_fetch.return_value = _unified_models()
+    mock_fetch.return_value = _snapshot(_unified_models())
 
     runner = CliRunner()
     result = runner.invoke(cli, ["opencode", "models", "detail", "--provider", "opencode"])
@@ -308,7 +365,7 @@ def test_opencode_models_detail_provider_filter(mock_fetch):
 
 @patch("llm_opencode.fetch_unified_models")
 def test_opencode_models_detail_model_exact_filter(mock_fetch):
-    mock_fetch.return_value = _unified_models()
+    mock_fetch.return_value = _snapshot(_unified_models())
 
     runner = CliRunner()
     result = runner.invoke(cli, ["opencode", "models", "detail", "--model", "grok-4.5"])
@@ -319,7 +376,7 @@ def test_opencode_models_detail_model_exact_filter(mock_fetch):
 
 @patch("llm_opencode.fetch_unified_models")
 def test_opencode_models_detail_empty(mock_fetch):
-    mock_fetch.return_value = []
+    mock_fetch.return_value = _snapshot([])
 
     runner = CliRunner()
     result = runner.invoke(cli, ["opencode", "models", "detail"])
@@ -329,7 +386,9 @@ def test_opencode_models_detail_empty(mock_fetch):
 
 @patch("llm_opencode.fetch_unified_models")
 def test_opencode_models_detail_pricing_no_priced_models(mock_fetch):
-    mock_fetch.return_value = [{"model_id": "grok-4.5", "pricing": {"input": None}}]
+    mock_fetch.return_value = _snapshot(
+        [{"model_id": "grok-4.5", "pricing": {"go": {"input": None}}}]
+    )
 
     runner = CliRunner()
     result = runner.invoke(cli, ["opencode", "models", "detail", "--format", "pricing"])
@@ -339,15 +398,20 @@ def test_opencode_models_detail_pricing_no_priced_models(mock_fetch):
 
 @patch("llm_opencode.fetch_unified_models")
 def test_opencode_models_detail_pricing_missing_values(mock_fetch):
-    mock_fetch.return_value = [
-        {
-            "model_name": "Mystery Model",
-            "pricing": {
-                "input": 1.0, "output": 2.0, "cached_read": None,
-                "cached_write": None, "usage": None,
-            },
-        }
-    ]
+    mock_fetch.return_value = _snapshot(
+        [
+            {
+                "model_name": "Mystery Model",
+                "pricing": {
+                    "go": {
+                        "input": 1.0, "output": 2.0, "cached_read": None,
+                        "cached_write": None, "monthly_limit": None,
+                        "limit_note": None,
+                    },
+                },
+            }
+        ]
+    )
 
     runner = CliRunner()
     result = runner.invoke(cli, ["opencode", "models", "detail", "--format", "pricing"])
@@ -359,25 +423,54 @@ def test_opencode_models_detail_pricing_missing_values(mock_fetch):
 
 @patch("llm_opencode.fetch_unified_models")
 def test_opencode_models_detail_pricing_cached_write(mock_fetch):
-    mock_fetch.return_value = [
-        {
-            "model_id": "grok-4.5",
-            "pricing": {
-                "input": 2.0, "output": 6.0, "cached_read": 0.3,
-                "cached_write": 1.5, "usage": 15.0,
-            },
-        }
-    ]
+    mock_fetch.return_value = _snapshot(
+        [
+            {
+                "model_id": "grok-4.5",
+                "pricing": {
+                    "go": {
+                        "input": 2.0, "output": 6.0, "cached_read": 0.3,
+                        "cached_write": 1.5, "monthly_limit": 15.0,
+                        "limit_note": None,
+                    },
+                },
+            }
+        ]
+    )
 
     runner = CliRunner()
     result = runner.invoke(cli, ["opencode", "models", "detail", "--format", "pricing"])
     assert result.exit_code == 0, result.output
     assert "Cached Write: $1.50" in result.output
+    assert "Monthly cap:" in result.output
+
+
+@patch("llm_opencode.fetch_unified_models")
+def test_opencode_models_detail_pricing_free_note(mock_fetch):
+    mock_fetch.return_value = _snapshot(
+        [
+            {
+                "model_id": "longcat-2.5-preview-free",
+                "pricing": {
+                    "go": {
+                        "input": 0.0, "output": 0.0, "cached_read": 0.0,
+                        "cached_write": None, "monthly_limit": None,
+                        "limit_note": None, "pricing_note": "free",
+                    },
+                },
+            }
+        ]
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["opencode", "models", "detail", "--format", "pricing"])
+    assert result.exit_code == 0, result.output
+    assert "$0.00 (free)" in result.output
 
 
 @patch("llm_opencode.fetch_unified_models")
 def test_opencode_models_detail_output_file(mock_fetch, tmp_path):
-    mock_fetch.return_value = _unified_models()
+    mock_fetch.return_value = _snapshot(_unified_models())
     output_file = tmp_path / "models.csv"
 
     runner = CliRunner()
@@ -401,15 +494,17 @@ def test_opencode_models_detail_scrape_failure_shows_docs_link(mock_fetch):
 
 # ─── sort_models ─────────────────────────────────────────────────────────────
 
-def _model(model_id, name, input_price, usage, per_month):
+def _model(model_id, name, input_price, monthly_limit, per_month):
     return {
         "model_id": model_id,
         "model_name": name,
         "pricing": {
-            "input": input_price, "output": 1.0, "cached_read": None,
-            "cached_write": None, "usage": usage,
+            "go": {
+                "input": input_price, "output": 1.0, "cached_read": None,
+                "cached_write": None, "monthly_limit": monthly_limit,
+            },
         },
-        "rate_limits": {"per_5_hours": "", "per_week": "", "per_month": str(per_month)},
+        "rate_limits": {"go": {"per_month": str(per_month)}},
     }
 
 
@@ -438,8 +533,8 @@ def test_sort_models_requests_invalid_rate_limit_pinned_last():
         {
             "model_id": "b",
             "model_name": "B",
-            "pricing": {"input": 0.5, "usage": 15.0},
-            "rate_limits": {"per_month": "not-a-number"},
+            "pricing": {"go": {"input": 0.5, "monthly_limit": 15.0}},
+            "rate_limits": {"go": {"per_month": "not-a-number"}},
         },
     ]
     result = sort_models(models, sort_by="requests")
@@ -469,8 +564,8 @@ def test_sort_models_by_output():
         _model("a", "A", 1.0, 15.0, 300),
         _model("b", "B", 1.0, 15.0, 300),
     ]
-    models[0]["pricing"]["output"] = 5.0
-    models[1]["pricing"]["output"] = 1.0
+    models[0]["pricing"]["go"]["output"] = 5.0
+    models[1]["pricing"]["go"]["output"] = 1.0
     result = sort_models(models, sort_by="output")
     assert [m["model_id"] for m in result] == ["b", "a"]
 
@@ -511,10 +606,30 @@ def test_format_unified_table_requests_missing_shows_dash():
     from llm_opencode import format_unified_table
 
     model = _model("a", "A", 0.5, 15.0, 0)
-    model["pricing"]["cached_read"] = 0.1
-    model["pricing"]["cached_write"] = 0.2
+    model["pricing"]["go"]["cached_read"] = 0.1
+    model["pricing"]["go"]["cached_write"] = 0.2
     model["data_retention"] = "30 days"
 
     result = format_unified_table([model])
 
     assert result.count("—") == 1
+
+
+def test_plan_helpers_tolerate_missing_or_non_dict_blocks():
+    from llm_opencode.cli import _plan_pricing, _plan_rate_limits
+
+    assert _plan_pricing({"pricing": "flat"}) == {}
+    assert _plan_rate_limits({}) == {}
+    block = {"input": 1.0, "monthly_limit": 10.0}
+    assert _plan_pricing({"pricing": None}) == {}
+    assert _plan_pricing({"pricing": {"go_plus": block}}) == block
+    assert _plan_rate_limits({"rate_limits": {"go_plus": {"per_month": "9"}}}) == {
+        "per_month": "9"
+    }
+
+
+def test_format_unified_table_tolerates_non_dict_pricing():
+    from llm_opencode import format_unified_table
+
+    result = format_unified_table([{"model_id": "x", "pricing": None}])
+    assert "x" in result

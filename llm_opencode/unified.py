@@ -65,35 +65,34 @@ def get_opencode_models():
     return models
 
 
-_DEFAULT_PRICING = {
-    "input": None,
-    "output": None,
-    "cached_read": None,
-    "cached_write": None,
-    "usage": None,
-    "currency": "USD",
-}
-
-_DEFAULT_RATE_LIMITS = {"per_5_hours": "", "per_week": "", "per_month": ""}
-
-
 def _unified_entry(model_id, api_model, docs_entry):
-    return {
+    entry = {
         "model_id": model_id,
         "model_name": docs_entry.get("model_name", ""),
         "provider": api_model.get("owned_by", ""),
         "created": api_model.get("created"),
+        "matched": docs_entry.get("matched", False),
         "endpoint": docs_entry.get("endpoint", ""),
         "ai_sdk_package": docs_entry.get("ai_sdk_package", ""),
         "model_training": docs_entry.get("model_training", ""),
         "data_retention": docs_entry.get("data_retention", ""),
-        "pricing": docs_entry.get("pricing", dict(_DEFAULT_PRICING)),
-        "rate_limits": docs_entry.get("rate_limits", dict(_DEFAULT_RATE_LIMITS)),
+        "pricing": docs_entry.get("pricing", {}),
+        "rate_limits": docs_entry.get("rate_limits", {}),
     }
+    if "variant" in docs_entry:
+        entry["variant"] = docs_entry["variant"]
+    if "promo" in docs_entry:
+        entry["promo"] = docs_entry["promo"]
+    return entry
 
 
 def merge_model_data(api_models, docs_data):
-    """Merge API model data with docs table data into a unified list."""
+    """Merge API model data with docs table data into a unified list.
+
+    Every docs row lands in the output: rows that never joined an API model
+    are kept as orphans with ``matched: false`` — the join verdict belongs
+    downstream.
+    """
     unified = []
     for api_model in api_models:
         model_id = api_model.get("id", "")
@@ -108,11 +107,20 @@ def merge_model_data(api_models, docs_data):
     return unified
 
 
-def fetch_unified_models():
-    """Fetch API and docs model data, merged into a unified list.
+def _snapshot(models, warnings):
+    return {
+        "scraped_at": int(time.time()),
+        "warnings": warnings,
+        "models": models,
+    }
 
-    Results are cached for 24 hours. Raises DocsScrapeError if the docs
-    page cannot be fetched or parsed.
+
+def fetch_unified_models():
+    """Fetch API and docs model data, merged into a unified snapshot.
+
+    The snapshot payload is ``{"scraped_at", "warnings", "models"}``, cached
+    for 24 hours. Raises DocsScrapeError if the docs page cannot be fetched
+    or no docs table matches any known header contract.
     """
     import llm_opencode as _root
 
@@ -123,19 +131,20 @@ def fetch_unified_models():
     ):
         try:
             with open(cache_path) as file:
-                return json.load(file)
+                cached = json.load(file)
+            if isinstance(cached, dict) and "models" in cached:
+                return cached
         except (json.JSONDecodeError, OSError):
             pass
 
     api_models = _root.get_opencode_models()
     tables = parse_html_tables(_root.fetch_docs_page())
-    if not tables:
-        raise DocsScrapeError("No tables found on the OpenCode Go docs page")
-    docs_data = parse_docs_tables(tables)
+    docs_data, warnings = parse_docs_tables(tables)
     unified = merge_model_data(api_models, docs_data)
+    snapshot = _snapshot(unified, warnings)
 
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     with open(cache_path, "w") as file:
-        json.dump(unified, file)
+        json.dump(snapshot, file)
 
-    return unified
+    return snapshot

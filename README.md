@@ -99,7 +99,7 @@ with `--sort-by`:
 ```bash
 llm opencode models detail                          # best plan value first (default)
 llm opencode models detail --sort-by input          # cheapest per-token first
-llm opencode models detail --sort-by usage          # cheapest plan first
+llm opencode models detail --sort-by usage          # lowest monthly cap first
 llm opencode models detail --sort-by name           # alphabetical by display name
 llm opencode models detail --sort-by model_id       # by model ID
 ```
