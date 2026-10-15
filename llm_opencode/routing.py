@@ -1,118 +1,205 @@
+import re
+
 import llm
 
-OPENAI_PROTOCOL_MODELS = {
-    "glm-5",
-    "glm-5.1",
-    "glm-5.2",
-    "glm-5.3",
-    "glm-5.3-flash",
-    "kimi-k2.5",
-    "kimi-k2.6",
-    "kimi-k2.7-code",
-    "kimi-k3",
-    "mimo-v2",
-    "mimo-v2-pro",
-    "mimo-v2.5",
-    "mimo-v2.5-pro",
-    "mimo-v2.6-flash",
-    "mimo-v2.6-pro",
-    "mimo-v2-omni",
-    "deepseek-v4-pro",
-    "deepseek-v4-flash",
-    "deepseek-v4-flash-vision-exp",
-    "deepseek-v4.1-flash",
-    "deepseek-flash",
-    "hy3",
-    "hy4-preview",
-    "longcat-2.0",
-    "longcat-2.5-preview-free",
-    "space-bunny",
-}
-
-OPENAI_RESPONSES_PROTOCOL_MODELS = {
-    "gpt-5.6-luna",
-    "gpt-6-luna",
-    "grok-4.6",
-    "grok-4.7",
-    "muse-spark-1.2-contributor",
-    "muse-spark-1.3-contributor",
-}
-
-ANTHROPIC_PROTOCOL_MODELS = {
-    "minimax-m3",
-    "minimax-m2.7",
-    "minimax-m2.5",
-    "qwen3.5-plus",
-    "qwen3.6-plus",
-    "qwen3.7-plus",
-    "qwen3.7-max",
-    "qwen3.8-max",
-    "qwen3.8-flash",
-    "claude-haiku-5-5",
-}
-
-UNKNOWN_MODELS_DEFAULT = "openai"
-
+# Fallback API bases, used only when a model's Endpoint cell carries a path
+# without a host (or when the docs can vouch for the protocol but not the
+# host). The Endpoint cell is the per-model source of truth for everything else.
 BASE_URL_OPENAI = "https://opencode.ai/zen/go/v1"
 BASE_URL_ANTHROPIC = "https://opencode.ai/zen/go"
 
+# Path→protocol mapping is authoritative: the Endpoint cell's path decides what
+# wire protocol a model speaks. The AI SDK Package column corroborates only.
+_PROTOCOL_ROUTES = (
+    ("openai", "/v1/chat/completions"),
+    ("openai-responses", "/v1/responses"),
+    ("anthropic", "/v1/messages"),
+)
 
-def _get_protocol(model_id):
-    if model_id in ANTHROPIC_PROTOCOL_MODELS:
-        return "anthropic"
-    if model_id in OPENAI_RESPONSES_PROTOCOL_MODELS:
-        return "openai-responses"
-    return "openai"
+# Google-style per-model resource path: no OpenAI/Anthropic wire family the
+# plugin speaks serves this shape.
+_GOOGLE_PATH_RE = re.compile(r"/v1(?:beta)?/models/[^/]+/?$")
+
+# Skip reasons surfaced in the detail JSON's unregistered section.
+SKIP_NO_DOCS_ROW = "protocol unknown: no docs row"
+SKIP_GOOGLE_STYLE = "unsupported protocol: google-style"
+SKIP_UNRECOGNIZED_PATH = "protocol unknown: unrecognized endpoint path"
+
+# Corroboration: the package column must agree with the path's protocol;
+# disagreement warns (visible in detail) but never vetoes registration.
+_EXPECTED_PACKAGES = {
+    "openai": {"@ai-sdk/openai", "@ai-sdk/openai-compatible"},
+    "openai-responses": {"@ai-sdk/openai"},
+    "anthropic": {"@ai-sdk/anthropic"},
+}
+
+
+def _split_host_and_path(endpoint):
+    """Split an endpoint into ``(scheme://host, path)``; bare paths have no host."""
+    match = re.match(r"^(https?://[^/]+)(/.*)$", endpoint)
+    if match:
+        return match.group(1), match.group(2)
+    return None, endpoint if endpoint.startswith("/") else "/" + endpoint
+
+
+def _match_path(path):
+    """Match an endpoint path against the authoritative protocol routes.
+
+    Returns ``(protocol, suffix)`` where suffix is the path tail that named
+    the protocol; ``(None, None)`` when the path speaks no known protocol.
+    """
+    if _GOOGLE_PATH_RE.search(path):
+        return "google-style", None
+    for protocol, suffix in _PROTOCOL_ROUTES:
+        if path.endswith(suffix):
+            return protocol, suffix
+    return None, None
+
+
+def _api_base(host, path, protocol, suffix):
+    """Per-model API base derived from the endpoint URL.
+
+    The OpenAI SDKs append the wire path to ``base_url`` (so the base keeps
+    its ``/v1`` mount); the Anthropic SDK appends ``/v1/messages`` (so the
+    base drops it). Hostless endpoint cells fall back to the zen constants.
+    """
+    if host is None:
+        return BASE_URL_ANTHROPIC if protocol == "anthropic" else BASE_URL_OPENAI
+    if protocol == "anthropic":
+        return host + path[: -len(suffix)]
+    return host + path[: -len(suffix)] + "/v1"
+
+
+def derive_route(entry):
+    """Derive the registration route for one unified snapshot entry.
+
+    Returns a copy of the entry with the derived fields the detail renderer
+    consumes: ``registered``, ``protocol``, ``api_base``, ``skip_reason`` and
+    ``corroboration_warning``. A model the docs cannot vouch for (no Endpoint
+    cell) or one speaking an unsupported protocol is not registered; the AI
+    SDK Package column can disagree with the path but only warns.
+    """
+    route = dict(entry)
+    route["registered"] = False
+    route["protocol"] = None
+    route["api_base"] = None
+    route["skip_reason"] = None
+    route["corroboration_warning"] = None
+
+    endpoint = entry.get("endpoint") or ""
+    if not endpoint:
+        route["skip_reason"] = SKIP_NO_DOCS_ROW
+        return route
+
+    host, path = _split_host_and_path(endpoint)
+    protocol, suffix = _match_path(path)
+    if protocol == "google-style":
+        route["skip_reason"] = SKIP_GOOGLE_STYLE
+        return route
+    if protocol is None:
+        route["skip_reason"] = f"{SKIP_UNRECOGNIZED_PATH} ({path})"
+        return route
+
+    route["protocol"] = protocol
+    route["api_base"] = _api_base(host, path, protocol, suffix)
+    package = entry.get("ai_sdk_package") or ""
+    if package and package not in _EXPECTED_PACKAGES[protocol]:
+        route["corroboration_warning"] = (
+            f'protocol corroboration: {route.get("model_id") or ""} endpoint path '
+            f'resolves {protocol} but ai_sdk_package is "{package}"'
+        )
+    route["registered"] = True
+    return route
+
+
+def analyze_routes(entries):
+    """Derive registration routes for unified snapshot entries, in order."""
+    return [derive_route(entry) for entry in entries]
+
+
+def corroboration_warnings(routes):
+    """Scrape warnings for endpoint-path vs AI SDK Package disagreements."""
+    return [route["corroboration_warning"] for route in routes if route["corroboration_warning"]]
+
+
+def unregistered_routes(routes):
+    """The detail JSON's unregistered section: skipped models with reasons."""
+    return [
+        {
+            "model_id": route.get("model_id", ""),
+            "endpoint": route.get("endpoint", ""),
+            "protocol": route["protocol"],
+            "skip_reason": route["skip_reason"],
+        }
+        for route in routes
+        if not route["registered"]
+    ]
 
 
 @llm.hookimpl
 def register_models(register):
+    """Register models from the unified snapshot, routed by endpoint path.
+
+    Models the snapshot cannot vouch for are skipped, never guessed: no docs
+    row → ``protocol unknown: no docs row``; a Google-style resource path →
+    ``unsupported protocol: google-style``. Corroboration disagreement warns
+    (it surfaces in ``detail``) but never vetoes — registration prints nothing.
+    """
     from llm_opencode import (
+        DocsScrapeError,
         OpenCodeGoAnthropicAsyncChat,
         OpenCodeGoAnthropicChat,
         OpenCodeGoAsyncChat,
         OpenCodeGoChat,
         OpenCodeGoResponsesAsyncChat,
         OpenCodeGoResponsesChat,
-        get_opencode_models,
+        fetch_unified_models,
     )
 
     key = llm.get_key("", "opencode", "OPENCODE_KEY")
     if not key:
         return
-    for model_definition in get_opencode_models():
-        model_id = model_definition["id"]
-        llm_model_id = f"opencode-go/{model_id}"
-        protocol = _get_protocol(model_id)
-
-        if protocol == "openai":
+    try:
+        snapshot = fetch_unified_models()
+    except DocsScrapeError:
+        return
+    entries = snapshot.get("models", []) if isinstance(snapshot, dict) else snapshot
+    for route in analyze_routes(entries):
+        if not route["registered"]:
+            continue
+        llm_model_id = f"opencode-go/{route['model_id']}"
+        if route["protocol"] == "openai":
             register(
                 OpenCodeGoChat(
                     model_id=llm_model_id,
-                    model_name=model_id,
-                    api_base=BASE_URL_OPENAI,
+                    model_name=route["model_id"],
+                    api_base=route["api_base"],
                 ),
                 OpenCodeGoAsyncChat(
                     model_id=llm_model_id,
-                    model_name=model_id,
-                    api_base=BASE_URL_OPENAI,
+                    model_name=route["model_id"],
+                    api_base=route["api_base"],
                 ),
             )
-        elif protocol == "openai-responses":
+        elif route["protocol"] == "openai-responses":
             register(
                 OpenCodeGoResponsesChat(
                     model_id=llm_model_id,
-                    model_name=model_id,
-                    api_base=BASE_URL_OPENAI,
+                    model_name=route["model_id"],
+                    api_base=route["api_base"],
                 ),
                 OpenCodeGoResponsesAsyncChat(
                     model_id=llm_model_id,
-                    model_name=model_id,
-                    api_base=BASE_URL_OPENAI,
+                    model_name=route["model_id"],
+                    api_base=route["api_base"],
                 ),
             )
-        elif protocol == "anthropic":
+        elif route["protocol"] == "anthropic":
             register(
-                OpenCodeGoAnthropicChat(model_id=llm_model_id),
-                OpenCodeGoAnthropicAsyncChat(model_id=llm_model_id),
+                OpenCodeGoAnthropicChat(
+                    model_id=llm_model_id, api_base=route["api_base"]
+                ),
+                OpenCodeGoAnthropicAsyncChat(
+                    model_id=llm_model_id, api_base=route["api_base"]
+                ),
             )
