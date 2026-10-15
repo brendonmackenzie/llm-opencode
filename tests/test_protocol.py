@@ -3,8 +3,11 @@ from unittest.mock import MagicMock, patch
 
 import llm
 
-from llm_opencode import _get_protocol
 from tests._fakes import make_message
+
+
+def _snapshot(*entries):
+    return {"scraped_at": 1, "warnings": [], "models": list(entries)}
 
 
 def _fake_chat_completion(content="Hello"):
@@ -25,9 +28,16 @@ def _fake_chat_completion(content="Hello"):
 
 @patch("openai.OpenAI")
 @patch("llm.get_key", return_value="sk-test")
-@patch("llm_opencode.get_opencode_models")
-def test_openai_protocol_prompt(mock_get_models, mock_get_key, mock_openai_cls):
-    mock_get_models.return_value = [{"id": "deepseek-v4-flash"}]
+@patch("llm_opencode.fetch_unified_models")
+def test_openai_protocol_prompt(mock_fetch, mock_get_key, mock_openai_cls, user_dir):
+    mock_fetch.return_value = _snapshot(
+        {
+            "model_id": "deepseek-v4-flash",
+            "matched": True,
+            "endpoint": "https://opencode.ai/inference/go/v1/chat/completions",
+            "ai_sdk_package": "@ai-sdk/openai-compatible",
+        }
+    )
     chat_completions = mock_openai_cls.return_value.chat.completions
     chat_completions.create.return_value = _fake_chat_completion("Hello")
     conversation = llm.get_model("opencode-go/deepseek-v4-flash").conversation()
@@ -48,9 +58,16 @@ def test_openai_protocol_prompt(mock_get_models, mock_get_key, mock_openai_cls):
 
 @patch("llm_opencode.Anthropic")
 @patch("llm.get_key", return_value="sk-test")
-@patch("llm_opencode.get_opencode_models")
-def test_anthropic_protocol_prompt(mock_get_models, mock_get_key, mock_anthropic_cls):
-    mock_get_models.return_value = [{"id": "minimax-m3"}]
+@patch("llm_opencode.fetch_unified_models")
+def test_anthropic_protocol_prompt(mock_fetch, mock_get_key, mock_anthropic_cls, user_dir):
+    mock_fetch.return_value = _snapshot(
+        {
+            "model_id": "minimax-m3",
+            "matched": True,
+            "endpoint": "https://opencode.ai/inference/go/v1/messages",
+            "ai_sdk_package": "@ai-sdk/anthropic",
+        }
+    )
     mock_anthropic_cls.return_value.messages.create.return_value = make_message("Hello")
     conversation = llm.get_model("opencode-go/minimax-m3").conversation()
     response = conversation.prompt(
@@ -66,31 +83,3 @@ def test_anthropic_protocol_prompt(mock_get_models, mock_get_key, mock_anthropic
     assert (
         default_headers["x-opencode-session"] == conversation.id
     )
-
-
-def test_get_protocol():
-    assert _get_protocol("glm-5") == "openai"
-    assert _get_protocol("glm-5.1") == "openai"
-    assert _get_protocol("deepseek-v4-flash") == "openai"
-    assert _get_protocol("kimi-k2.5") == "openai"
-    assert _get_protocol("minimax-m3") == "anthropic"
-    assert _get_protocol("minimax-m2.7") == "anthropic"
-    assert _get_protocol("qwen3.7-max") == "anthropic"
-    assert _get_protocol("unknown-model") == "openai"
-
-
-def test_get_protocol_responses():
-    assert _get_protocol("gpt-6-luna") == "openai-responses"
-    assert _get_protocol("gpt-5.6-luna") == "openai-responses"
-    assert _get_protocol("grok-4.6") == "openai-responses"
-    assert _get_protocol("grok-4.7") == "openai-responses"
-    assert _get_protocol("muse-spark-1.2-contributor") == "openai-responses"
-    assert _get_protocol("muse-spark-1.3-contributor") == "openai-responses"
-
-
-def test_get_protocol_new_model_ids():
-    assert _get_protocol("claude-haiku-5-5") == "anthropic"
-    assert _get_protocol("qwen3.8-max") == "anthropic"
-    assert _get_protocol("qwen3.8-flash") == "anthropic"
-    assert _get_protocol("glm-5.3-flash") == "openai"
-    assert _get_protocol("hy4-preview") == "openai"
