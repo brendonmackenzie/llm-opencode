@@ -3,9 +3,10 @@ from html.parser import HTMLParser
 
 DOCS_PAGE_URL = "https://opencode.ai/docs/go/"
 
-CURRENCY = "USD"
-
-PLAN_KEY_FALLBACK = ("go", "go_plus")
+# The subscription plans the docs page prices, in table order. Single source
+# of truth: cli.py imports this; _plan_key falls back to it when a table has
+# no data-plan-panel attribute.
+PLANS = ("go", "go_plus")
 
 # Variants inherit these base fields when absent — pricing is never inherited
 # (variant economics come only from variant rows).
@@ -252,7 +253,7 @@ def _plan_key(panel, family_count):
     (first pricing/rates table = Go, second = Go Plus)."""
     if panel:
         return re.sub(r"[^a-z0-9]+", "_", panel.strip().lower())
-    return PLAN_KEY_FALLBACK[family_count % len(PLAN_KEY_FALLBACK)]
+    return PLANS[family_count % len(PLANS)]
 
 
 def _identify_table(header_set):
@@ -413,7 +414,6 @@ def parse_docs_tables(tables):
             )
             plan_pricing["monthly_limit"] = monthly_limit
             plan_pricing["limit_note"] = limit_note
-            plan_pricing["currency"] = CURRENCY
             if free_in_row:
                 plan_pricing["pricing_note"] = "free"
 

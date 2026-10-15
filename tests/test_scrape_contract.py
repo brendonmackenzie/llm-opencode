@@ -229,11 +229,11 @@ def test_plan_keyed_pricing_from_both_panels():
     assert docs_data["glm-5.3-flash"]["pricing"] == {
         "go": {
             "input": 0.15, "output": 0.5, "cached_read": 0.03, "cached_write": None,
-            "monthly_limit": 60.0, "limit_note": None, "currency": "USD",
+            "monthly_limit": 60.0, "limit_note": None,
         },
         "go_plus": {
             "input": 0.15, "output": 0.5, "cached_read": 0.03, "cached_write": None,
-            "monthly_limit": 180.0, "limit_note": None, "currency": "USD",
+            "monthly_limit": 180.0, "limit_note": None,
         },
     }
     assert not warnings
@@ -543,7 +543,7 @@ def test_malformed_cells_and_short_rows_degrade():
     assert variant["variant"] == "Peak"
     assert variant["pricing"]["go"] == {
         "input": None, "output": None, "cached_read": 0.0, "cached_write": None,
-        "monthly_limit": None, "limit_note": None, "currency": "USD",
+        "monthly_limit": None, "limit_note": None,
         "pricing_note": "free",
     }
     assert variant["model_training"] == "Not used"

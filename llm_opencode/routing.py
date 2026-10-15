@@ -23,7 +23,7 @@ _GOOGLE_PATH_RE = re.compile(r"/v1(?:beta)?/models/[^/]+/?$")
 # Skip reasons surfaced in the detail JSON's unregistered section.
 SKIP_NO_DOCS_ROW = "protocol unknown: no docs row"
 SKIP_GOOGLE_STYLE = "unsupported protocol: google-style"
-SKIP_UNRECOGNIZED_PATH = "protocol unknown: unrecognized endpoint path"
+SKIP_UNRECOGNIZED_PATH = "unsupported protocol: unrecognized endpoint path"
 
 # Corroboration: the package column must agree with the path's protocol;
 # disagreement warns (visible in detail) but never vetoes registration.

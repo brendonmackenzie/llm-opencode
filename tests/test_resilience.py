@@ -1,4 +1,5 @@
 import json
+import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -344,9 +345,13 @@ def test_listing_reads_snapshot_only_never_scrapes(user_dir):
     mock_docs.assert_not_called()
 
 
-def test_listing_without_snapshot_uses_api_ids_with_unknown_markers(user_dir):
+def test_listing_without_snapshot_reads_api_cache_without_refresh(user_dir):
+    api_cache = user_dir / "opencode_models.json"
+    api_cache.write_text(json.dumps({"data": [{"id": "glm-5"}]}))
+    os.utime(api_cache, (0, 0))  # expired on disk: still no refresh, no fetch
+
     with (
-        patch("llm_opencode.get_opencode_models", return_value=[{"id": "glm-5"}]),
+        patch("llm_opencode.get_opencode_models") as mock_api,
         patch("llm_opencode.fetch_docs_page") as mock_docs,
     ):
         runner = CliRunner()
@@ -355,6 +360,22 @@ def test_listing_without_snapshot_uses_api_ids_with_unknown_markers(user_dir):
     assert result.exit_code == 0, result.output
     assert "- id: glm-5" in result.output
     assert "protocol: unknown (no scrape data)" in result.output
+    mock_api.assert_not_called()
+    mock_docs.assert_not_called()
+
+
+def test_listing_fresh_install_prints_hint_and_hits_nothing(user_dir):
+    with (
+        patch("httpx2.get", side_effect=AssertionError("listing hit the network")),
+        patch("llm_opencode.get_opencode_models") as mock_api,
+        patch("llm_opencode.fetch_docs_page") as mock_docs,
+    ):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["opencode", "models"])
+
+    assert result.exit_code == 0, result.output
+    assert "llm opencode detail" in result.output
+    mock_api.assert_not_called()
     mock_docs.assert_not_called()
 
 
