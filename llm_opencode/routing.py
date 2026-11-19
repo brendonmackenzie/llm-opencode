@@ -15,8 +15,12 @@ _RECOMMENDED_API_PROTOCOLS = {
     "messages": "anthropic",
 }
 
+# The recommended_api of Google-style models: a route family the plugin
+# knows by name but speaks no client for.
+_GOOGLE_RECOMMENDED_API = "generate-content"
+
 # Skip reasons surfaced in the detail JSON's unregistered section.
-SKIP_NO_API_BASE = "protocol unknown: no api base_url"
+SKIP_NO_API_BASE = "no api base_url"
 SKIP_GOOGLE_STYLE = "unsupported protocol: google-style"
 SKIP_UNRECOGNIZED_API = "unsupported protocol: unrecognized recommended_api"
 
@@ -51,7 +55,7 @@ def derive_route(entry):
     route["skip_reason"] = None
 
     recommended = entry.get("recommended_api") or ""
-    if recommended == "generate-content":
+    if recommended == _GOOGLE_RECOMMENDED_API:
         route["skip_reason"] = SKIP_GOOGLE_STYLE
         return route
     protocol = _RECOMMENDED_API_PROTOCOLS.get(recommended)
@@ -98,7 +102,7 @@ def register_models(register):
     Models whose route the plugin cannot speak are skipped, never guessed:
     google-style → ``unsupported protocol: google-style``; an unknown
     recommended_api → ``unsupported protocol: unrecognized recommended_api``;
-    a missing base_url → ``protocol unknown: no api base_url``.
+    a missing base_url → ``no api base_url``.
     Registration prints nothing.
     """
     from llm_opencode import (

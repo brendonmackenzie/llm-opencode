@@ -201,7 +201,7 @@ def test_unregistered_routes_shapes_for_detail_renderer():
 
 
 def test_routing_module_has_no_model_id_lists():
-    import llm_opencode.routing as routing
+    from llm_opencode import routing
 
     for name in (
         "OPENAI_PROTOCOL_MODELS",

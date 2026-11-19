@@ -267,7 +267,12 @@ def test_opencode_detail_json_unaffected_by_plan_filter(mock_fetch):
 
 @patch("llm_opencode.fetch_models_snapshot")
 def test_opencode_detail_json_order_ignores_plan_filter(mock_fetch):
-    mock_fetch.return_value = _payload(_unified_models())
+    # Asymmetric allowances: sorting by go puts glm-5.3 first, sorting by
+    # go-plus would put claude-haiku-5-5 first — so the assertion bites.
+    models = _unified_models()
+    models[0]["monthly_usage"] = {"go": 500, "go-plus": 30, "go-teams": 505}
+    models[1]["monthly_usage"] = {"go": 15, "go-plus": 1000, "go-teams": 20}
+    mock_fetch.return_value = _payload(models)
 
     runner = CliRunner()
     default = runner.invoke(cli, ["opencode", "detail", "--format", "json"])
@@ -279,6 +284,11 @@ def test_opencode_detail_json_order_ignores_plan_filter(mock_fetch):
     )
     assert default.exit_code == plus.exit_code == everything.exit_code == 0
     models_default = json.loads(default.output)["models"]
+    assert [m["model_id"] for m in models_default] == [
+        "glm-5.3",
+        "claude-haiku-5-5",
+        "gpt-6-luna",
+    ]
     assert json.loads(plus.output)["models"] == models_default
     assert json.loads(everything.output)["models"] == models_default
 
@@ -714,8 +724,8 @@ def test_sort_models_usage_respects_plan_filter():
         _usage_model("a", 15, 1.0),
         _usage_model("b", 60, 1.0),
     ]
-    for model in models:
-        model["monthly_usage"]["go-plus"] = 5
+    models[0]["monthly_usage"]["go-plus"] = 50
+    models[1]["monthly_usage"]["go-plus"] = 5
     result = sort_models(models, sort_by="usage", plan="go-plus")
     assert [m["model_id"] for m in result] == ["a", "b"]
 
@@ -812,18 +822,17 @@ def test_format_unified_table_tolerates_non_dict_pricing():
     assert "x" in result
 
 
-def test_row_usage_falls_back_to_largest_plan():
+def test_row_usage_strict_per_plan():
     from llm_opencode.cli import _row_usage
 
     model = {"monthly_usage": {"go": 5, "go-plus": 200, "go-teams": 105}}
-    assert _row_usage(model, "go-plus", "go-plus") == 200
-    assert _row_usage(model, "go", "go") == 5
-    assert _row_usage(model, "all", "go-teams") == 105
-    # Strict in all mode: a plan the API didn't price renders nothing.
-    assert _row_usage({"monthly_usage": {"go": 5}}, "all", "go-plus") is None
-    # Tolerant fallback for a single plan lookup when the plan is absent.
-    assert _row_usage({"monthly_usage": {"go": 5}}, "go-teams", "go-teams") == 5
-    assert _row_usage({"monthly_usage": None}, "go", "go") is None
+    assert _row_usage(model, "go") == 5
+    assert _row_usage(model, "go-plus") == 200
+    assert _row_usage(model, "go-teams") == 105
+    # Strict: a plan the API didn't price renders nothing, never borrowed.
+    assert _row_usage({"monthly_usage": {"go": 5}}, "go-plus") is None
+    assert _row_usage({"monthly_usage": None}, "go") is None
+    assert _row_usage({"monthly_usage": "flat"}, "go") is None
 
 
 def test_fmt_price_handles_sub_cent_values():

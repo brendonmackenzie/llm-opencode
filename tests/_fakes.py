@@ -1,6 +1,4 @@
 from dataclasses import dataclass, field
-from types import SimpleNamespace
-from typing import Optional
 
 
 @dataclass
@@ -50,14 +48,14 @@ def _make_options(max_tokens=None, temperature=None):
 
 @dataclass
 class Prompt:
-    prompt: Optional[str] = None
-    system: Optional[str] = None
+    prompt: str | None = None
+    system: str | None = None
     options: _Options = field(
         default_factory=lambda: _make_options(max_tokens=None, temperature=None)
     )
     tool_results: list = field(default_factory=list)
     attachments: list = field(default_factory=list)
-    schema: Optional[dict] = None
+    schema: dict | None = None
     tools: list = field(default_factory=list)
 
 

@@ -258,7 +258,51 @@ def test_fetch_models_snapshot_no_snapshot_fetch_failure_raises(tmp_path):
         fetch_models_snapshot()
 
 
+# ─── get_opencode_models (envelope validation) ──────────────────────────────
+
+
+@patch(
+    "llm_opencode.unified.fetch_cached_json",
+    return_value={"data": [{"id": "glm-5.3"}]},
+)
+def test_get_opencode_models_returns_data_list(mock_fetch, tmp_path):
+    from llm_opencode import get_opencode_models
+
+    with patch("llm_opencode.llm.user_dir", return_value=tmp_path):
+        assert get_opencode_models() == [{"id": "glm-5.3"}]
+
+
+@patch("llm_opencode.unified.fetch_cached_json", return_value={"unexpected": "shape"})
+def test_get_opencode_models_rejects_non_list_envelope(mock_fetch, tmp_path):
+    from llm_opencode import get_opencode_models
+
+    with (
+        patch("llm_opencode.llm.user_dir", return_value=tmp_path),
+        pytest.raises(DownloadError),
+    ):
+        get_opencode_models()
+
+
+@patch("llm_opencode.unified.fetch_cached_json", return_value={"data": "not-a-list"})
+def test_get_opencode_models_rejects_non_list_data(mock_fetch, tmp_path):
+    from llm_opencode import get_opencode_models
+
+    with (
+        patch("llm_opencode.llm.user_dir", return_value=tmp_path),
+        pytest.raises(DownloadError),
+    ):
+        get_opencode_models()
+
+
 # ─── read_snapshot ───────────────────────────────────────────────────────────
+
+
+def test_snapshot_age_tolerates_missing_or_non_numeric():
+    from llm_opencode import snapshot_age
+
+    assert snapshot_age(None) is None
+    assert snapshot_age("not-a-number") is None
+    assert snapshot_age(0) > 86_400  # epoch age is measured, not fatal
 
 
 def test_read_snapshot_missing_returns_none(tmp_path):

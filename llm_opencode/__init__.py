@@ -199,9 +199,8 @@ class _OpenCodeGoAnthropicChatBase:
     key_env_var = "OPENCODE_KEY"
     can_stream = True
 
-    def __init__(self, model_id, model_name=None, anthropic_model_id=None, api_base=None):
+    def __init__(self, model_id, anthropic_model_id=None, api_base=None):
         self.model_id = model_id
-        self.model_name = model_name or model_id
         self.anthropic_model_id = anthropic_model_id or model_id.replace(
             "opencode-go/", ""
         )

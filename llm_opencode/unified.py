@@ -40,10 +40,8 @@ def fetch_cached_json(url, path, cache_timeout):
 
         response = httpx2.get(url, follow_redirects=True)
         response.raise_for_status()
-        with open(path, "w") as file:
-            json.dump(response.json(), file)
-        return response.json()
-    except httpx2.HTTPError:
+        payload = response.json()
+    except (httpx2.HTTPError, json.JSONDecodeError):
         if path.is_file():
             try:
                 with open(path, "r") as file:
@@ -57,14 +55,21 @@ def fetch_cached_json(url, path, cache_timeout):
                 f"Failed to download data and no cache is available at {path}"
             )
 
+    with open(path, "w") as file:
+        json.dump(payload, file)
+    return payload
+
 
 def get_opencode_models():
-    models = fetch_cached_json(
+    payload = fetch_cached_json(
         url=MODELS_URL,
         path=llm.user_dir() / "opencode_models.json",
         cache_timeout=3600,
-    )["data"]
-    return models
+    )
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(data, list):
+        raise DownloadError(f"Models API payload is not a model list: {MODELS_URL}")
+    return data
 
 
 def read_api_models_cache():
@@ -139,10 +144,10 @@ def api_model_to_entry(model):
     }
 
 
-def _snapshot(models, warnings=None):
+def _snapshot(models, warnings):
     return {
         "fetched_at": int(time.time()),
-        "warnings": warnings or [],
+        "warnings": warnings,
         "models": models,
     }
 

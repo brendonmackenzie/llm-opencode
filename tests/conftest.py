@@ -1,8 +1,7 @@
 import pathlib
-
-import llm
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from llm_opencode import OpenCodeGoAnthropicAsyncChat, OpenCodeGoAnthropicChat
 

@@ -147,9 +147,9 @@ def register_commands(cli):
             "pricing": format_unified_pricing,
         }
         if format_ == "json":
-            # JSON is unaffected by --plan: it always carries every plan and
-            # its order is defined without reference to the filter.
-            routes = sort_models(routes, sort_by, plan=plan)
+            # JSON is unaffected by --plan: it always carries every plan, so
+            # its order is defined by the default plan alone.
+            routes = sort_models(routes, sort_by)
             result = format_unified_json(
                 routes,
                 warnings=snapshot.get("warnings", []),
@@ -184,35 +184,34 @@ def register_commands(cli):
     models.add_command(detail)
 
 
-def _row_usage(model, plan, current_plan):
-    """Monthly usage (dollars) for one plan row.
+def _show_plans(plan):
+    """The plan columns to render: every plan in ``all`` mode, else the one."""
+    return PLANS if plan == "all" else (plan,)
 
-    In ``all`` mode the plan blocks are looked up strictly — a missing plan
-    renders a dash instead of silently borrowing another plan's allowance.
-    For a single plan, the largest plan value stands in when the requested
-    plan is absent.
+
+def _row_usage(model, plan_column):
+    """The plan's monthly usage allowance in dollars, or ``None``.
+
+    Strict per-plan lookup: an allowance the API didn't price for this
+    plan renders a dash, never another plan's number borrowed.
     """
     usage = model.get("monthly_usage")
-    if not isinstance(usage, dict):
-        return None
-    if plan == "all":
-        return usage.get(current_plan)
-    value = usage.get(plan)
-    if value is not None:
-        return value
-    return max(usage.values(), default=None)
+    if isinstance(usage, dict):
+        return usage.get(plan_column)
+    return None
 
 
 def _usage_key(model, plan=DEFAULT_PLAN):
     """Sort key: highest monthly usage first, then cheapest input.
 
-    In ``all`` mode the most generous plan allowance represents the model.
+    In ``all`` mode the most generous plan allowance represents the model
+    (an ordering heuristic only — rendered rows stay strictly per-plan).
     """
     if plan == "all":
         usage = model.get("monthly_usage")
         value = max(usage.values(), default=None) if isinstance(usage, dict) else None
     else:
-        value = _row_usage(model, plan, plan)
+        value = _row_usage(model, plan)
     pricing = model.get("pricing") or {}
     input_price = pricing.get("input")
     input_sort = input_price if input_price is not None else float("inf")
@@ -298,6 +297,8 @@ def format_unified_json(
 
 
 def _fmt_price(value):
+    """Dollar render: ``.2f``, except below a cent where four decimals keep
+    the API's real sub-cent cache prices visible ($0.003, not $0.00)."""
     if value is None:
         return "—"
     if value == 0:
@@ -366,7 +367,7 @@ def format_unified_table(models, plan=DEFAULT_PLAN):
     if not models:
         return "No models found."
 
-    show_plans = PLANS if plan == "all" else (plan,)
+    show_plans = _show_plans(plan)
     headers = [
         "Model ID", "Name", "Protocol", "Usage/Mo", "Input", "Output",
         "Cache R", "Cache W", "Ctx", "Training", "ZDR",
@@ -387,7 +388,7 @@ def format_unified_table(models, plan=DEFAULT_PLAN):
                     model.get("model_id", "")[:25],
                     model.get("model_name", "")[:20],
                     protocol,
-                    _fmt_usage(_row_usage(model, plan, current_plan)),
+                    _fmt_usage(_row_usage(model, current_plan)),
                     _fmt_price(pricing.get("input")),
                     _fmt_price(pricing.get("output")),
                     _fmt_price(pricing.get("cached_read")),
@@ -448,7 +449,7 @@ def format_unified_csv(models, plan=DEFAULT_PLAN):
     writer = csv.writer(buf)
     writer.writerow(CSV_HEADERS)
     for model in models:
-        show_plans = PLANS if plan == "all" else (plan,)
+        show_plans = _show_plans(plan)
         protocol = model.get("protocol") or ""
         pricing = model.get("pricing") or {}
         limits = model.get("limits") or {}
@@ -468,7 +469,7 @@ def format_unified_csv(models, plan=DEFAULT_PLAN):
                     pricing.get("output", ""),
                     pricing.get("cached_read", ""),
                     json.dumps(cached_write) if isinstance(cached_write, dict) else cached_write,
-                    _row_usage(model, plan, current_plan) or "",
+                    _row_usage(model, current_plan) or "",
                     model.get("training", ""),
                     model.get("zdr", ""),
                     model.get("limited_regions", ""),
@@ -490,7 +491,7 @@ def format_unified_csv(models, plan=DEFAULT_PLAN):
 def format_unified_pricing(models, plan=DEFAULT_PLAN):
     """Format unified models as a pricing comparison sorted by input cost."""
     priced = []
-    show_plans = PLANS if plan == "all" else (plan,)
+    show_plans = _show_plans(plan)
     for model in models:
         name = model.get("model_id") or model.get("model_name") or "?"
         for current_plan in show_plans:
@@ -499,7 +500,7 @@ def format_unified_pricing(models, plan=DEFAULT_PLAN):
                 continue
             label = f"{name} ({current_plan})" if plan == "all" else name
             priced.append(
-                (label, model, pricing, _row_usage(model, plan, current_plan))
+                (label, model, pricing, _row_usage(model, current_plan))
             )
     priced.sort(key=lambda entry: entry[2]["input"])
 
