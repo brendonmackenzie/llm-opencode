@@ -1,10 +1,17 @@
+import asyncio
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import llm
 
-from tests._fakes import make_message
-from tests._payload import api_model, entry, snapshot
+from tests._fakes import make_message, make_responses_completion
+from tests._payload import (
+    anthropic_api_model,
+    api_model,
+    entry,
+    responses_api_model,
+    snapshot,
+)
 
 
 @patch("openai.OpenAI")
@@ -36,8 +43,6 @@ def test_openai_protocol_prompt(mock_fetch, mock_get_key, mock_openai_cls, user_
 @patch("llm.get_key", return_value="sk-test")
 @patch("llm_opencode.fetch_models_snapshot")
 def test_anthropic_protocol_prompt(mock_fetch, mock_get_key, mock_anthropic_cls, user_dir):
-    from tests._payload import anthropic_api_model
-
     mock_fetch.return_value = snapshot(entry(anthropic_api_model()))
     mock_anthropic_cls.return_value.messages.create.return_value = make_message("Hello")
     conversation = llm.get_model("opencode-go/claude-haiku-5-5").conversation()
@@ -53,6 +58,62 @@ def test_anthropic_protocol_prompt(mock_fetch, mock_get_key, mock_anthropic_cls,
     default_headers = mock_anthropic_cls.call_args[1]["default_headers"]
     assert (
         default_headers["x-opencode-session"] == conversation.id
+    )
+
+
+@patch("openai.OpenAI")
+@patch("llm.get_key", return_value="sk-test")
+@patch("llm_opencode.fetch_models_snapshot")
+def test_responses_protocol_prompt(mock_fetch, mock_get_key, mock_openai_cls, user_dir):
+    mock_fetch.return_value = snapshot(
+        entry(responses_api_model(model_id="gpt-6-luna", name="GPT-6 Luna"))
+    )
+    client = mock_openai_cls.return_value
+    client.responses.create.return_value = make_responses_completion("Hello")
+    conversation = llm.get_model("opencode-go/gpt-6-luna").conversation()
+    response = conversation.prompt(
+        "Say hello in one word", stream=False
+    )
+
+    assert str(response) == "Hello"
+    create_kwargs = client.responses.create.call_args[1]
+    assert create_kwargs["model"] == "gpt-6-luna"
+    assert create_kwargs["stream"] is False
+    client_kwargs = mock_openai_cls.call_args[1]
+    assert client_kwargs["base_url"] == "https://opencode.ai/inference/go/openai/v1"
+    assert (
+        client_kwargs["default_headers"]["x-opencode-session"] == conversation.id
+    )
+
+
+@patch("openai.AsyncOpenAI")
+@patch("llm.get_key", return_value="sk-test")
+@patch("llm_opencode.fetch_models_snapshot")
+def test_responses_protocol_prompt_async(mock_fetch, mock_get_key, mock_openai_cls, user_dir):
+    mock_fetch.return_value = snapshot(
+        entry(responses_api_model(model_id="gpt-6-luna", name="GPT-6 Luna"))
+    )
+    client = mock_openai_cls.return_value
+    client.responses.create = AsyncMock(
+        return_value=make_responses_completion("Hello")
+    )
+
+    async def run():
+        conversation = llm.get_async_model("opencode-go/gpt-6-luna").conversation()
+        response = await conversation.prompt(
+            "Say hello in one word", stream=False
+        )
+        return conversation, await response.text()
+
+    conversation, text = asyncio.run(run())
+
+    assert text == "Hello"
+    create_kwargs = client.responses.create.call_args[1]
+    assert create_kwargs["model"] == "gpt-6-luna"
+    client_kwargs = mock_openai_cls.call_args[1]
+    assert client_kwargs["base_url"] == "https://opencode.ai/inference/go/openai/v1"
+    assert (
+        client_kwargs["default_headers"]["x-opencode-session"] == conversation.id
     )
 
 

@@ -50,6 +50,20 @@ def test_anthropic_chat_default_model_id_async():
     assert model.anthropic_model_id == "minimax-m3"
 
 
+def test_iter_text_blocks_skips_non_text_blocks(anthropic_sync_model):
+    from types import SimpleNamespace
+
+    message = SimpleNamespace(
+        content=[
+            SimpleNamespace(type="text", text="Hello"),
+            SimpleNamespace(type="tool_use", id="toolu_1", name="lookup"),
+            SimpleNamespace(type="text", text="World"),
+        ]
+    )
+
+    assert list(anthropic_sync_model._iter_text_blocks(message)) == ["Hello", "World"]
+
+
 def test_build_messages_with_conversation(anthropic_sync_model):
     conv = Conversation(
         responses=[

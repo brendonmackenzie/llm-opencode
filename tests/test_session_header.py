@@ -12,7 +12,7 @@ from llm_opencode import (
     OpenCodeGoResponsesAsyncChat,
     OpenCodeGoResponsesChat,
 )
-from tests._fakes import Conversation, _Options
+from tests._fakes import Conversation, _Options, make_responses_completion
 
 
 def _make_model(async_=False):
@@ -174,20 +174,10 @@ async def test_async_interleaved_conversations_keep_separate_sessions():
     assert _texts(results[1]) == ["session-bbb"]
 
 
-def _responses_completion(output_text="Hello"):
-    completion = MagicMock()
-    completion.model_dump.return_value = {
-        "id": "resp_test",
-        "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
-    }
-    completion.output = []
-    return completion
-
-
 def test_responses_session_header_from_conversation():
     model = _make_responses_model()
     mock_client = MagicMock()
-    mock_client.responses.create.return_value = _responses_completion()
+    mock_client.responses.create.return_value = make_responses_completion()
     captured_client_kwargs = {}
 
     def fake_openai(**kwargs):
@@ -202,3 +192,121 @@ def test_responses_session_header_from_conversation():
     assert captured_client_kwargs["default_headers"] == {
         "x-opencode-session": "my-session-uuid"
     }
+
+
+async def test_responses_session_header_from_conversation_async():
+    model = _make_responses_model(async_=True)
+    captured_client_kwargs = {}
+
+    def fake_async_openai(**kwargs):
+        captured_client_kwargs.update(kwargs)
+        client = MagicMock()
+        client.responses.create = AsyncMock(return_value=make_responses_completion())
+        return client
+
+    conv = Conversation(id="my-session-uuid")
+    with patch("openai.AsyncOpenAI", new=fake_async_openai):
+        chunks = [
+            chunk
+            async for chunk in model.execute(
+                _make_prompt(model), False, MagicMock(), conv, "sk-test"
+            )
+        ]
+    assert chunks == []
+    assert captured_client_kwargs["default_headers"] == {
+        "x-opencode-session": "my-session-uuid"
+    }
+
+
+def test_responses_missing_conversation_generates_uuid():
+    model = _make_responses_model()
+    captured_client_kwargs = {}
+
+    def fake_openai(**kwargs):
+        captured_client_kwargs.update(kwargs)
+        client = MagicMock()
+        client.responses.create.return_value = make_responses_completion()
+        return client
+
+    with patch("openai.OpenAI", new=fake_openai):
+        list(model.execute(_make_prompt(model), False, MagicMock(), None, "sk-test"))
+    header = captured_client_kwargs["default_headers"]["x-opencode-session"]
+    uuid.UUID(header)
+
+
+async def test_responses_missing_conversation_generates_uuid_async():
+    model = _make_responses_model(async_=True)
+    captured_client_kwargs = {}
+
+    def fake_async_openai(**kwargs):
+        captured_client_kwargs.update(kwargs)
+        client = MagicMock()
+        client.responses.create = AsyncMock(
+            return_value=make_responses_completion()
+        )
+        return client
+
+    with patch("openai.AsyncOpenAI", new=fake_async_openai):
+        chunks = [
+            chunk
+            async for chunk in model.execute(
+                _make_prompt(model), False, MagicMock(), None, "sk-test"
+            )
+        ]
+    assert chunks == []
+    header = captured_client_kwargs["default_headers"]["x-opencode-session"]
+    uuid.UUID(header)
+
+
+async def test_async_responses_interleaved_conversations_keep_separate_sessions():
+    model = _make_responses_model(async_=True)
+    captured = []
+
+    def fake_async_openai(**kwargs):
+        session = (kwargs.get("default_headers") or {}).get("x-opencode-session")
+        captured.append(session)
+        client = MagicMock()
+        client.responses.create = AsyncMock(
+            return_value=make_responses_completion(session)
+        )
+        return client
+
+    async def run(conv_id):
+        conv = Conversation(id=conv_id)
+        return [
+            chunk
+            async for chunk in model.execute(
+                _make_prompt(model), False, MagicMock(), conv, "sk-test"
+            )
+        ]
+
+    with patch("openai.AsyncOpenAI", new=fake_async_openai):
+        await asyncio.gather(run("session-aaa"), run("session-bbb"))
+
+    assert sorted(captured) == ["session-aaa", "session-bbb"]
+
+
+def test_responses_get_client_without_session_uses_plain_client():
+    model = _make_responses_model()
+    with patch("openai.OpenAI") as mock_openai:
+        model.get_client("sk-test")
+    assert "default_headers" not in mock_openai.call_args[1]
+
+
+async def test_responses_get_client_without_session_uses_plain_client_async():
+    model = _make_responses_model(async_=True)
+    with patch("openai.AsyncOpenAI") as mock_openai:
+        model.get_client("sk-test", async_=True)
+    assert "default_headers" not in mock_openai.call_args[1]
+
+
+def test_openai_build_kwargs_without_session_header():
+    model = _make_model()
+    kwargs = model.build_kwargs(_make_prompt(model), False)
+    assert "extra_headers" not in kwargs
+
+
+async def test_openai_build_kwargs_without_session_header_async():
+    model = _make_model(async_=True)
+    kwargs = model.build_kwargs(_make_prompt(model), False)
+    assert "extra_headers" not in kwargs

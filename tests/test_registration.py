@@ -143,6 +143,20 @@ def test_openai_chat_str():
     assert str(model) == "OpenCode Go: opencode-go/test"
 
 
+def test_openai_responses_chat_str():
+    model = OpenCodeGoResponsesChat(
+        model_id="opencode-go/test", model_name="test", api_base="https://example.com/v1"
+    )
+    assert str(model) == "OpenCode Go: opencode-go/test"
+
+
+def test_openai_responses_async_chat_str():
+    model = OpenCodeGoResponsesAsyncChat(
+        model_id="opencode-go/test", model_name="test", api_base="https://example.com/v1"
+    )
+    assert str(model) == "OpenCode Go: opencode-go/test"
+
+
 def test_openai_async_chat_str():
     model = OpenCodeGoAsyncChat(
         model_id="opencode-go/test", model_name="test", api_base="https://example.com/v1"

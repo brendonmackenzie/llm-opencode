@@ -1,4 +1,6 @@
 from dataclasses import dataclass, field
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 
 @dataclass
@@ -29,6 +31,29 @@ def make_message(text="Hello", input_tokens=10, output_tokens=5, content=None):
         content=content,
         usage=Usage(input_tokens=input_tokens, output_tokens=output_tokens),
     )
+
+
+def make_responses_completion(text=None):
+    """A non-streaming Responses-API completion.
+
+    ``text=None`` yields no output items (header/round-trip plumbing tests);
+    a string yields one message item carrying that text.
+    """
+    completion = MagicMock()
+    completion.model_dump.return_value = {
+        "id": "resp_test",
+        "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+    }
+    if text is None:
+        completion.output = []
+    else:
+        completion.output = [
+            SimpleNamespace(
+                type="message",
+                content=[SimpleNamespace(type="output_text", text=text)],
+            )
+        ]
+    return completion
 
 
 class _Options(dict):
