@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from types import SimpleNamespace
-from typing import Optional
+from unittest.mock import MagicMock
 
 
 @dataclass
@@ -33,6 +33,29 @@ def make_message(text="Hello", input_tokens=10, output_tokens=5, content=None):
     )
 
 
+def make_responses_completion(text=None):
+    """A non-streaming Responses-API completion.
+
+    ``text=None`` yields no output items (header/round-trip plumbing tests);
+    a string yields one message item carrying that text.
+    """
+    completion = MagicMock()
+    completion.model_dump.return_value = {
+        "id": "resp_test",
+        "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+    }
+    if text is None:
+        completion.output = []
+    else:
+        completion.output = [
+            SimpleNamespace(
+                type="message",
+                content=[SimpleNamespace(type="output_text", text=text)],
+            )
+        ]
+    return completion
+
+
 class _Options(dict):
     def __getattr__(self, name):
         try:
@@ -50,14 +73,14 @@ def _make_options(max_tokens=None, temperature=None):
 
 @dataclass
 class Prompt:
-    prompt: Optional[str] = None
-    system: Optional[str] = None
+    prompt: str | None = None
+    system: str | None = None
     options: _Options = field(
         default_factory=lambda: _make_options(max_tokens=None, temperature=None)
     )
     tool_results: list = field(default_factory=list)
     attachments: list = field(default_factory=list)
-    schema: Optional[dict] = None
+    schema: dict | None = None
     tools: list = field(default_factory=list)
 
 

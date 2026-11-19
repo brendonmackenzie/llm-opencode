@@ -43,13 +43,6 @@ Alternatively, set the `OPENCODE_KEY` environment variable.
 
 ## Usage
 
-List available models (fully offline — reads the local snapshot, or the cached
-API model list when no snapshot has been scraped yet):
-
-```bash
-llm opencode models
-```
-
 List all models registered with LLM:
 
 ```bash
@@ -59,100 +52,100 @@ llm models | grep opencode-go
 Run a prompt with an OpenAI-protocol model:
 
 ```bash
-llm -m opencode-go/deepseek-v4-flash "Explain quantum computing in one paragraph"
+llm -m opencode-go/deepseek-v4.1-flash "Explain quantum computing in one paragraph"
 ```
 
 Run a prompt with an Anthropic-protocol model:
 
 ```bash
-llm -m opencode-go/minimax-m3 "Write a haiku about programming"
+llm -m opencode-go/claude-haiku-5-5 "Write a haiku about programming"
 ```
 
 Start an interactive chat:
 
 ```bash
-llm chat -m opencode-go/glm-5.1
+llm chat -m opencode-go/glm-5.3
 ```
 
 ## Model details
 
-Show rich model metadata (pricing, rate limits, endpoints, and data retention
-policies) merged from the OpenCode Go API and docs:
+Show rich model metadata (pricing, plan allowances, capabilities, and data
+policies) served by the OpenCode Go models API:
 
 ```bash
 llm opencode detail                       # pricing table (default)
 llm opencode detail --format json         # full JSON
 llm opencode detail --format csv          # CSV export
 llm opencode detail --format pricing      # sorted by input cost
-llm opencode models detail                # alias for `llm opencode detail`
 ```
+
+`llm opencode detail` needs no API key and needs no network once a snapshot
+exists — it only fetches when the snapshot is missing or older than 24 hours.
+Bare `llm opencode` shows help.
 
 Filter the details:
 
 ```bash
 llm opencode detail --search qwen
-llm opencode detail --plan go_plus
-llm opencode detail --model minimax-m3
+llm opencode detail --plan go-plus
+llm opencode detail --plan go-teams
+llm opencode detail --model claude-haiku-5-5
 llm opencode detail --format csv -o models.csv
 ```
 
-By default, models are sorted by **plan value** (requests per month per dollar —
-best deal first), tie-broken by input price. The `detail` table also shows this
-metric as its **Plan Value** column (e.g. `2,636 req/$`). Change the sort order
-with `--sort-by`:
+By default, models are sorted by **monthly usage** — the dollar allowance
+included in the selected plan, largest first — tie-broken by input price.
+Change the sort order with `--sort-by`:
 
 ```bash
-llm opencode detail                           # best plan value first (default)
-llm opencode detail --sort-by input           # cheapest per-token first
-llm opencode detail --sort-by monthly-limit   # lowest monthly cap first
-llm opencode detail --sort-by name            # alphabetical by display name
-llm opencode detail --sort-by model_id        # by model ID
+llm opencode detail                        # biggest plan allowance first (default)
+llm opencode detail --sort-by input        # cheapest per-token first
+llm opencode detail --sort-by output       # cheapest output tokens first
+llm opencode detail --sort-by name         # alphabetical by display name
+llm opencode detail --sort-by model_id     # by model ID
 ```
 
 The `pricing` format always sorts by input price ascending.
 
 ### Snapshot resilience
 
-Model metadata is served from a single snapshot file, `opencode_unified_models.json`
-in the llm user dir, whose payload carries `scraped_at`, scrape `warnings`, and the
-merged `models` list:
+Model metadata is fetched from a single source — the [models
+API](https://opencode.ai/inference/go/v1/models) — and served from one
+snapshot file, `opencode_api_snapshot.json` in the llm user dir, whose
+payload carries `fetched_at`, `warnings`, and the `models` list:
 
 - `llm opencode detail` is the sole refresh point. Its 24-hour timeout decides
-  only whether a fresh docs scrape is *attempted*: a fresh snapshot is served
+  only whether a fresh API fetch is *attempted*: a fresh snapshot is served
   as-is, and an expired-but-present snapshot gets one refresh attempt — when
   the attempt fails (for example with networking disabled), the last-good
   snapshot is served with a staleness banner. Only when no snapshot file has
-  ever been written does `llm opencode detail` fail with a link to the docs
-  page.
-- Model registration never scrapes (the snapshot is served whatever its age,
-  and prints nothing), except for a one-time blocking bootstrap scrape the
+  ever been written does `llm opencode detail` fail with a link to the models
+  API.
+- Model registration never fetches (the snapshot is served whatever its age,
+  and prints nothing), except for a one-time blocking bootstrap fetch the
   very first time no snapshot file exists; if the bootstrap fails, no models
   are registered. Delete the snapshot file (or install on a fresh machine)
-  and running `llm opencode detail` performs the scrape that repopulates it
+  and running `llm opencode detail` performs the fetch that repopulates it
   and re-registration picks models back up.
-
-- Plain listing (`llm opencode models`, or bare `llm opencode`) never touches
-  the network: it reads the snapshot (IDs + protocols), or the cached API model
-  list when no snapshot has ever been written (IDs with
-  `unknown (no scrape data)` protocol markers). A fresh install — neither file
-  present — prints a hint to run `llm opencode detail` instead.
 
 ## Available Models
 
-The model list is served from the local snapshot or cache; run `llm opencode detail` to populate it (the only command that fetches).
+The model list is served from the local snapshot; run `llm opencode detail` to populate it (the only command that fetches).
 
-Available models broadly fall into two protocol groups:
+Routing comes straight from each model's `recommended_api`:
 
-| Protocol | Models |
-|----------|--------|
-| OpenAI | DeepSeek, GLM, Kimi K2.5/2.6, MiMo V2/V2.5, MiMo Omni |
-| Anthropic | MiniMax M2.5/M2.7/M3, Qwen3.5/3.6/3.7 Plus/Max |
+| recommended_api | Wire protocol | Status |
+|-----------------|---------------|--------|
+| `chat-completions` | OpenAI-compatible chat | registered |
+| `responses` | OpenAI responses | registered |
+| `messages` | Anthropic messages | registered |
+| `generate-content` | Google-style | listed, not registered (no Google wire client) |
 
 ## Options
 
 ### Anthropic-protocol models
 
-Anthropic-protocol models (MiniMax, Qwen) support the following options:
+Anthropic-protocol models support the following options:
 
 - `-o max_tokens N` — Maximum number of tokens to generate (default: 4096)
 - `-o temperature F` — Temperature for sampling (0.0–1.0)
@@ -160,7 +153,7 @@ Anthropic-protocol models (MiniMax, Qwen) support the following options:
 Example:
 
 ```bash
-llm -m opencode-go/minimax-m3 -o max_tokens 100 -o temperature 0.7 "Hello"
+llm -m opencode-go/claude-haiku-5-5 -o max_tokens 100 -o temperature 0.7 "Hello"
 ```
 
 ## Development

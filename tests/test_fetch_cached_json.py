@@ -144,6 +144,38 @@ def test_fetch_cached_json_fresh_cache_oserror_falls_back_to_network(
 
 
 @patch("httpx2.get")
+def test_fetch_cached_json_non_json_body_serves_stale_cache(mock_httpx_get, tmp_path):
+    cache_file = tmp_path / "cache.json"
+    stale_data = {"data": [{"id": "stale-model"}]}
+    cache_file.write_text(json.dumps(stale_data))
+    os.utime(cache_file, (0, 0))
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status.return_value = None
+    mock_response.json.side_effect = json.JSONDecodeError("Expecting value", "<html>", 0)
+    mock_httpx_get.return_value = mock_response
+
+    result = fetch_cached_json("https://example.com/api", cache_file, 3600)
+    assert result == stale_data
+    # The bad body never overwrites the last-good cache.
+    assert json.loads(cache_file.read_text()) == stale_data
+
+
+@patch("httpx2.get")
+def test_fetch_cached_json_non_json_body_no_cache_raises(mock_httpx_get, tmp_path):
+    cache_file = tmp_path / "cache.json"
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status.return_value = None
+    mock_response.json.side_effect = json.JSONDecodeError("Expecting value", "<html>", 0)
+    mock_httpx_get.return_value = mock_response
+
+    with pytest.raises(DownloadError):
+        fetch_cached_json("https://example.com/api", cache_file, 3600)
+    assert not cache_file.exists()
+
+
+@patch("httpx2.get")
 def test_fetch_cached_json_stale_cache_oserror_raises_download_error(
     mock_httpx_get, tmp_path
 ):

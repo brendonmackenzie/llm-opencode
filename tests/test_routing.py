@@ -3,202 +3,154 @@ from unittest.mock import MagicMock, patch
 import llm_opencode
 from llm_opencode import (
     SKIP_GOOGLE_STYLE,
-    SKIP_NO_DOCS_ROW,
-    SKIP_UNRECOGNIZED_PATH,
+    SKIP_NO_API_BASE,
+    SKIP_UNRECOGNIZED_API,
     analyze_routes,
-    corroboration_warnings,
     derive_route,
     unregistered_routes,
 )
+from tests._payload import (
+    CHAT_BASE_URL,
+    anthropic_api_model,
+    api_model,
+    entry,
+    google_api_model,
+    snapshot,
+)
 
-CHAT_ENDPOINT = "https://opencode.ai/inference/go/v1/chat/completions"
-RESPONSES_ENDPOINT = "https://opencode.ai/inference/go/v1/responses"
-ANTHROPIC_ENDPOINT = "https://opencode.ai/inference/go/v1/messages"
-GOOGLE_ENDPOINT = "https://opencode.ai/inference/go/v1/models/gemini-4-argon-contributor"
-
-
-def _entry(model_id, endpoint="", package="", **extras):
-    entry = {
-        "model_id": model_id,
-        "model_name": "",
-        "endpoint": endpoint,
-        "ai_sdk_package": package,
-    }
-    entry.update(extras)
-    return entry
+ANTHROPIC_BASE_URL = "https://opencode.ai/inference/go/anthropic/v1"
 
 
-def _snapshot(*entries):
-    return {"scraped_at": 1, "warnings": [], "models": list(entries)}
+# ─── the three routes (known-protocol / unknown / google-style) ────────────
 
-
-# ─── the three routes (known-protocol / no-row / google-style) ───────────────
 
 def test_derive_route_chat_completions():
-    route = derive_route(_entry("glm-5", CHAT_ENDPOINT, "@ai-sdk/openai-compatible"))
+    route = derive_route(entry(api_model()))
 
     assert route["registered"] is True
     assert route["protocol"] == "openai"
-    assert route["api_base"] == "https://opencode.ai/inference/go/v1"
+    assert route["api_base"] == CHAT_BASE_URL
     assert route["skip_reason"] is None
-    assert route["corroboration_warning"] is None
 
 
 def test_derive_route_responses():
-    route = derive_route(_entry("gpt-6-luna", RESPONSES_ENDPOINT, "@ai-sdk/openai"))
+    from tests._payload import responses_api_model
+
+    route = derive_route(entry(responses_api_model()))
 
     assert route["registered"] is True
     assert route["protocol"] == "openai-responses"
-    assert route["api_base"] == "https://opencode.ai/inference/go/v1"
+    assert route["api_base"] == CHAT_BASE_URL
 
 
 def test_derive_route_anthropic_messages():
-    route = derive_route(_entry("minimax-m3", ANTHROPIC_ENDPOINT, "@ai-sdk/anthropic"))
+    route = derive_route(entry(anthropic_api_model()))
 
     assert route["registered"] is True
     assert route["protocol"] == "anthropic"
-    assert route["api_base"] == "https://opencode.ai/inference/go"
-
-
-def test_derive_route_no_docs_row_skips():
-    route = derive_route(_entry("omen-alpha"))
-
-    assert route["registered"] is False
-    assert route["protocol"] is None
-    assert route["skip_reason"] == SKIP_NO_DOCS_ROW
+    # The Anthropic SDK appends /v1/messages: the base drops the mount.
+    assert route["api_base"] == "https://opencode.ai/inference/go/anthropic"
 
 
 def test_derive_route_google_style_skips():
-    route = derive_route(_entry("gemini-4-argon-contributor", GOOGLE_ENDPOINT, "@ai-sdk/google"))
+    route = derive_route(entry(google_api_model()))
 
     assert route["registered"] is False
     assert route["protocol"] is None
     assert route["skip_reason"] == SKIP_GOOGLE_STYLE
 
 
-def test_derive_route_unrecognized_path_skips():
-    route = derive_route(_entry("whisper-huge", "https://x.test/v1/audio/transcriptions"))
+def test_derive_route_unrecognized_recommended_api_skips():
+    route = derive_route(entry(api_model(), recommended_api="embeddings"))
 
     assert route["registered"] is False
-    assert route["skip_reason"] == f"{SKIP_UNRECOGNIZED_PATH} (/v1/audio/transcriptions)"
+    assert route["skip_reason"] == (
+        f"{SKIP_UNRECOGNIZED_API} (embeddings)"
+    )
+
+
+def test_derive_route_missing_recommended_api_skips():
+    route = derive_route(entry(api_model(), recommended_api=""))
+
+    assert route["registered"] is False
+    assert route["skip_reason"] == f"{SKIP_UNRECOGNIZED_API} (missing)"
+
+
+def test_derive_route_missing_base_url_skips():
+    route = derive_route(
+        entry(
+            api_model(
+                api={"chat-completions": {"base_url": "", "sdk": {"aisdk": "x"}}}
+            )
+        )
+    )
+
+    assert route["registered"] is False
+    assert route["skip_reason"] == SKIP_NO_API_BASE
 
 
 def test_derive_route_keeps_entry_fields():
+    route = derive_route(entry(api_model(), zdr=False))
+
+    assert route["zdr"] is False
+    assert route["model_name"] == "GLM-5.3"
+
+
+# ─── api_base derivation ─────────────────────────────────────────────────────
+
+
+def test_derive_route_per_model_host_honored_over_default():
     route = derive_route(
-        _entry("glm-5", CHAT_ENDPOINT, "", matched=True, data_retention="30 days")
+        entry(
+            api_model(
+                api={
+                    "chat-completions": {
+                        "base_url": "https://example-alt.test/openai/v1",
+                        "sdk": {"aisdk": "@ai-sdk/openai-compatible"},
+                    }
+                }
+            )
+        )
     )
 
-    assert route["matched"] is True
-    assert route["data_retention"] == "30 days"
+    assert route["api_base"] == "https://example-alt.test/openai/v1"
 
 
-def test_derive_route_variant_suffix_routes_from_inherited_endpoint():
-    route = derive_route(_entry("grok-4.7#le-200k-tokens", RESPONSES_ENDPOINT))
-
-    assert route["registered"] is True
-    assert route["protocol"] == "openai-responses"
-
-
-def test_derive_route_google_style_variant_interacts_with_suffixing():
+def test_derive_route_anthropic_base_without_v1_mount_stands_as_is():
     route = derive_route(
-        _entry("gemini-4-argon-contributor#le-1m-tokens", GOOGLE_ENDPOINT)
+        entry(
+            anthropic_api_model(
+                api={
+                    "messages": {
+                        "base_url": "https://example-alt.test/anthropic",
+                        "sdk": {"aisdk": "@ai-sdk/anthropic"},
+                    }
+                }
+            )
+        )
     )
 
-    assert route["registered"] is False
-    assert route["skip_reason"] == SKIP_GOOGLE_STYLE
-
-
-# ─── per-model API base over the hardcoded host ──────────────────────────────
-
-def test_derive_route_per_model_host_honored_over_hardcoded():
-    route = derive_route(
-        _entry("hy4-preview", "https://example-alt.test/inference/go/v1/chat/completions")
-    )
-
-    assert route["api_base"] == "https://example-alt.test/inference/go/v1"
-
-
-def test_derive_route_per_model_anthropic_base_drops_v1():
-    route = derive_route(_entry("minimax-m3", ANTHROPIC_ENDPOINT))
-    assert route["api_base"] == "https://opencode.ai/inference/go"
-
-
-def test_derive_route_fallback_base_when_host_absent():
-    route = derive_route(_entry("glm-5", "/v1/chat/completions"))
-
-    assert route["registered"] is True
-    assert route["protocol"] == "openai"
-    assert route["api_base"] == "https://opencode.ai/zen/go/v1"
-
-
-def test_derive_route_fallback_anthropic_base_when_host_absent():
-    route = derive_route(_entry("minimax-m3", "/v1/messages"))
-
-    assert route["registered"] is True
-    assert route["protocol"] == "anthropic"
-    assert route["api_base"] == "https://opencode.ai/zen/go"
+    assert route["api_base"] == "https://example-alt.test/anthropic"
 
 
 def test_derive_route_default_anthropic_base_without_arg():
-    model = llm_opencode.OpenCodeGoAnthropicChat(model_id="opencode-go/minimax-m3")
-    assert model.api_base == "https://opencode.ai/zen/go"
+    model = llm_opencode.OpenCodeGoAnthropicChat(model_id="opencode-go/claude-haiku-5-5")
+    assert model.api_base == llm_opencode.BASE_URL_ANTHROPIC
 
 
-# ─── corroboration: disagreement warns, never vetoes ─────────────────────────
+# ─── routing plumbing ───────────────────────────────────────────────────────
 
-def test_corroboration_mismatch_warns_but_still_registers():
-    route = derive_route(_entry("glm-5", CHAT_ENDPOINT, "@ai-sdk/google"))
-
-    assert route["registered"] is True
-    assert route["protocol"] == "openai"
-    assert route["corroboration_warning"] == (
-        'protocol corroboration: glm-5 endpoint path resolves openai '
-        'but ai_sdk_package is "@ai-sdk/google"'
-    )
-
-
-def test_corroboration_agreement_warns_nothing():
-    assert (
-        derive_route(_entry("glm-5", CHAT_ENDPOINT, "@ai-sdk/openai-compatible"))[
-            "corroboration_warning"
-        ]
-        is None
-    )
-    assert (
-        derive_route(_entry("gpt-6-luna", RESPONSES_ENDPOINT, "@ai-sdk/openai"))[
-            "corroboration_warning"
-        ]
-        is None
-    )
-    assert (
-        derive_route(_entry("minimax-m3", ANTHROPIC_ENDPOINT, "@ai-sdk/anthropic"))[
-            "corroboration_warning"
-        ]
-        is None
-    )
-
-
-def test_corroboration_missing_package_warns_nothing():
-    route = derive_route(_entry("glm-5", CHAT_ENDPOINT, ""))
-
-    assert route["corroboration_warning"] is None
-    assert route["registered"] is True
-
-
-# ─── routing plumbing ────────────────────────────────────────────────────────
 
 def _routing_fixture():
+    from tests._payload import responses_api_model
+
     return [
-        _entry("glm-5", CHAT_ENDPOINT, "@ai-sdk/openai-compatible"),
-        _entry("gpt-6-luna", RESPONSES_ENDPOINT, "@ai-sdk/openai"),
-        _entry("minimax-m3", ANTHROPIC_ENDPOINT, "@ai-sdk/anthropic"),
-        _entry("omen-alpha"),
-        _entry(
-            "gemini-4-argon-contributor",
-            GOOGLE_ENDPOINT,
-            "@ai-sdk/google",
-        ),
-        _entry("corroborate-me", CHAT_ENDPOINT, "@ai-sdk/google"),
+        entry(api_model()),
+        entry(responses_api_model()),
+        entry(anthropic_api_model()),
+        entry(api_model(model_id="omen-alpha", api={}, recommended_api="")),
+        entry(google_api_model()),
+        entry(api_model(model_id="embed-me", recommended_api="embeddings")),
     ]
 
 
@@ -206,22 +158,20 @@ def test_analyze_routes_preserves_order():
     routes = analyze_routes(_routing_fixture())
 
     assert [route["model_id"] for route in routes] == [
-        "glm-5",
+        "glm-5.3",
         "gpt-6-luna",
-        "minimax-m3",
+        "claude-haiku-5-5",
         "omen-alpha",
-        "gemini-4-argon-contributor",
-        "corroborate-me",
+        "gemini-4-argon",
+        "embed-me",
     ]
-    assert [route["registered"] for route in routes] == [True, True, True, False, False, True]
-
-
-def test_corroboration_warnings_collects_mismatches_only():
-    warnings = corroboration_warnings(analyze_routes(_routing_fixture()))
-
-    assert warnings == [
-        'protocol corroboration: corroborate-me endpoint path resolves openai '
-        'but ai_sdk_package is "@ai-sdk/google"'
+    assert [route["registered"] for route in routes] == [
+        True,
+        True,
+        True,
+        False,
+        False,
+        False,
     ]
 
 
@@ -233,19 +183,25 @@ def test_unregistered_routes_shapes_for_detail_renderer():
             "model_id": "omen-alpha",
             "endpoint": "",
             "protocol": None,
-            "skip_reason": "protocol unknown: no docs row",
+            "skip_reason": f"{SKIP_UNRECOGNIZED_API} (missing)",
         },
         {
-            "model_id": "gemini-4-argon-contributor",
-            "endpoint": GOOGLE_ENDPOINT,
+            "model_id": "gemini-4-argon",
+            "endpoint": "https://opencode.ai/inference/go/google/v1beta",
             "protocol": None,
             "skip_reason": "unsupported protocol: google-style",
+        },
+        {
+            "model_id": "embed-me",
+            "endpoint": "",
+            "protocol": None,
+            "skip_reason": f"{SKIP_UNRECOGNIZED_API} (embeddings)",
         },
     ]
 
 
-def test_registration_module_has_no_model_id_lists():
-    import llm_opencode.routing as routing
+def test_routing_module_has_no_model_id_lists():
+    from llm_opencode import routing
 
     for name in (
         "OPENAI_PROTOCOL_MODELS",
@@ -259,16 +215,15 @@ def test_registration_module_has_no_model_id_lists():
 def test_register_models_routes_from_snapshot_entries(user_dir):
     with (
         patch("llm.get_key", return_value="sk-test"),
-        patch("llm_opencode.fetch_unified_models") as mock_fetch,
+        patch("llm_opencode.fetch_models_snapshot") as mock_fetch,
     ):
-        mock_fetch.return_value = _snapshot(*_routing_fixture())
+        mock_fetch.return_value = snapshot(*_routing_fixture())
         register = MagicMock()
         llm_opencode.register_models(register)
 
     registered = [call[0][0].model_id for call in register.call_args_list]
     assert registered == [
-        "opencode-go/glm-5",
+        "opencode-go/glm-5.3",
         "opencode-go/gpt-6-luna",
-        "opencode-go/minimax-m3",
-        "opencode-go/corroborate-me",
+        "opencode-go/claude-haiku-5-5",
     ]

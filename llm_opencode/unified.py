@@ -1,19 +1,21 @@
+"""The OpenCode Go model catalog, from one JSON source of truth.
+
+OpenCode serves rich per-model metadata from a single endpoint
+(:data:`MODELS_URL`): display names, pricing, plan allowances, policy
+flags, capabilities, and the per-model API routes. This module fetches
+it (with a disk cache), shapes each payload entry into the unified
+model entry the rest of the plugin consumes, and snapshots the result.
+"""
+
 import json
 import time
 from pathlib import Path
 
 import llm
 
-from .docs_scraper import (
-    DocsScrapeError,
-    fetch_docs_page,
-    parse_docs_tables,
-    parse_html_tables,
-)
+MODELS_URL = "https://opencode.ai/inference/go/v1/models"
 
-MODELS_URL = "https://opencode.ai/zen/go/v1/models"
-
-UNIFIED_MODELS_CACHE_TIMEOUT = 86400  # 24 hours
+SNAPSHOT_REFRESH_TIMEOUT = 86400  # 24 hours
 
 
 class DownloadError(Exception):
@@ -38,10 +40,8 @@ def fetch_cached_json(url, path, cache_timeout):
 
         response = httpx2.get(url, follow_redirects=True)
         response.raise_for_status()
-        with open(path, "w") as file:
-            json.dump(response.json(), file)
-        return response.json()
-    except httpx2.HTTPError:
+        payload = response.json()
+    except (httpx2.HTTPError, json.JSONDecodeError):
         if path.is_file():
             try:
                 with open(path, "r") as file:
@@ -55,88 +55,85 @@ def fetch_cached_json(url, path, cache_timeout):
                 f"Failed to download data and no cache is available at {path}"
             )
 
+    with open(path, "w") as file:
+        json.dump(payload, file)
+    return payload
+
 
 def get_opencode_models():
-    models = fetch_cached_json(
+    payload = fetch_cached_json(
         url=MODELS_URL,
         path=llm.user_dir() / "opencode_models.json",
         cache_timeout=3600,
-    )["data"]
-    return models
+    )
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(data, list):
+        raise DownloadError(f"Models API payload is not a model list: {MODELS_URL}")
+    return data
 
 
-def read_api_models_cache():
-    """Read the models-API list cache from disk without refresh or fetch.
+def api_model_to_entry(model):
+    """Shape one models-API payload entry into a unified model entry.
 
-    Returns the ``data`` list when the file exists and parses, else ``None``.
-    There is intentionally no freshness check and no network fallback: the
-    plain listing is offline-only.
+    Pricing is plan-independent in the API: the entry carries one
+    ``pricing`` block plus one per-plan ``monthly_usage`` map (plan keys
+    ``go`` / ``go-plus`` / ``go-teams``; free models have none).
+    ``cached_write`` is kept exactly as served — a scalar price, or a
+    TTL-keyed dict of prices.
     """
-    path = llm.user_dir() / "opencode_models.json"
-    if path.is_file():
-        try:
-            with open(path) as file:
-                cached = json.load(file)
-            data = cached.get("data") if isinstance(cached, dict) else None
-            if isinstance(data, list):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return None
-
-
-def _unified_entry(model_id, api_model, docs_entry):
-    entry = {
-        "model_id": model_id,
-        "model_name": docs_entry.get("model_name", ""),
-        "provider": api_model.get("owned_by", ""),
-        "created": api_model.get("created"),
-        "matched": docs_entry.get("matched", False),
-        "endpoint": docs_entry.get("endpoint", ""),
-        "ai_sdk_package": docs_entry.get("ai_sdk_package", ""),
-        "model_training": docs_entry.get("model_training", ""),
-        "data_retention": docs_entry.get("data_retention", ""),
-        "pricing": docs_entry.get("pricing", {}),
-        "rate_limits": docs_entry.get("rate_limits", {}),
+    recommended = model.get("recommended_api") or ""
+    api_block = (model.get("api") or {}).get(recommended) or {}
+    cost_text = (model.get("cost") or {}).get("text") or {}
+    input_cost = cost_text.get("input") or {}
+    output_cost = cost_text.get("output") or {}
+    cache_cost = input_cost.get("cache") or {}
+    go = model.get("go") or {}
+    return {
+        "model_id": model.get("id", ""),
+        "model_name": model.get("name", ""),
+        "canonical_id": model.get("canonical_id", ""),
+        "provider": model.get("owned_by", ""),
+        "created": model.get("created"),
+        "family": model.get("family", ""),
+        "description": model.get("description", ""),
+        "open_weights": model.get("open_weights"),
+        "knowledge": model.get("knowledge", ""),
+        "release_date": model.get("release_date", ""),
+        "last_updated": model.get("last_updated", ""),
+        "recommended_api": recommended,
+        "endpoint": api_block.get("base_url", ""),
+        "ai_sdk_package": (api_block.get("sdk") or {}).get("aisdk", ""),
+        "pricing": {
+            "input": input_cost.get("price"),
+            "output": output_cost.get("price"),
+            "cached_read": cache_cost.get("read"),
+            "cached_write": cache_cost.get("write"),
+        },
+        "cost_overrides": {
+            "input": input_cost.get("overrides") or [],
+            "output": output_cost.get("overrides") or [],
+        },
+        "cost_multipliers": cost_text.get("multipliers") or [],
+        "monthly_usage": go.get("monthly_usage") or {},
+        "training": go.get("training"),
+        "zdr": go.get("zdr"),
+        "limited_regions": go.get("limited_regions"),
+        "featured": go.get("featured"),
+        "limits": model.get("limit") or {},
+        "capabilities": model.get("capabilities") or {},
     }
-    if "variant" in docs_entry:
-        entry["variant"] = docs_entry["variant"]
-    if "promo" in docs_entry:
-        entry["promo"] = docs_entry["promo"]
-    return entry
-
-
-def merge_model_data(api_models, docs_data):
-    """Merge API model data with docs table data into a unified list.
-
-    Every docs row lands in the output: rows that never joined an API model
-    are kept as orphans with ``matched: false`` — the join verdict belongs
-    downstream.
-    """
-    unified = []
-    for api_model in api_models:
-        model_id = api_model.get("id", "")
-        docs_entry = docs_data.get(model_id, {})
-        unified.append(_unified_entry(model_id, api_model, docs_entry))
-
-    api_ids = {m.get("id", "") for m in api_models}
-    for model_id, docs_entry in docs_data.items():
-        if model_id not in api_ids:
-            unified.append(_unified_entry(model_id, {}, docs_entry))
-
-    return unified
 
 
 def _snapshot(models, warnings):
     return {
-        "scraped_at": int(time.time()),
+        "fetched_at": int(time.time()),
         "warnings": warnings,
         "models": models,
     }
 
 
 def _snapshot_path():
-    return llm.user_dir() / "opencode_unified_models.json"
+    return llm.user_dir() / "opencode_api_snapshot.json"
 
 
 def read_snapshot():
@@ -157,32 +154,35 @@ def read_snapshot():
     return None
 
 
-def snapshot_age(scraped_at):
-    """Age of a ``scraped_at`` timestamp in seconds, or ``None`` when the
+def snapshot_age(timestamp):
+    """Age of a ``fetched_at`` timestamp in seconds, or ``None`` when the
     value is missing or not a number."""
     try:
-        return time.time() - float(scraped_at)
+        return time.time() - float(timestamp)
     except (TypeError, ValueError):
         return None
 
 
 def _snapshot_is_fresh(snapshot):
-    age = snapshot_age(snapshot.get("scraped_at", 0))
-    return age is not None and age < UNIFIED_MODELS_CACHE_TIMEOUT
+    age = snapshot_age(snapshot.get("fetched_at", 0))
+    return age is not None and age < SNAPSHOT_REFRESH_TIMEOUT
 
 
-def scrape_snapshot():
-    """Scrape the API model list and docs page fresh, persist, and return
-    the unified snapshot. Raises DocsScrapeError (docs fetch or no contract
-    table matched) or DownloadError (models list fetch) on failure.
+def refresh_snapshot():
+    """Fetch the models API fresh, shape it, persist, and return the
+    snapshot. Raises :class:`DownloadError` on fetch failure with no
+    usable cache.
     """
     import llm_opencode as _root
 
     api_models = _root.get_opencode_models()
-    tables = parse_html_tables(_root.fetch_docs_page())
-    docs_data, warnings = parse_docs_tables(tables)
-    unified = merge_model_data(api_models, docs_data)
-    snapshot = _snapshot(unified, warnings)
+    models, warnings = [], []
+    for index, model in enumerate(api_models):
+        if not isinstance(model, dict) or not model.get("id"):
+            warnings.append(f"models API entry {index}: no id — skipped")
+            continue
+        models.append(api_model_to_entry(model))
+    snapshot = _snapshot(models, warnings)
 
     cache_path = _snapshot_path()
     cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -192,21 +192,21 @@ def scrape_snapshot():
     return snapshot
 
 
-def fetch_unified_models():
-    """Serve the unified snapshot, refreshing it only when warranted.
+def fetch_models_snapshot():
+    """Serve the model snapshot, refreshing it only when warranted.
 
-    The snapshot payload is ``{"scraped_at", "warnings", "models"}``. The 24
+    The snapshot payload is ``{"fetched_at", "warnings", "models"}``. The 24
     hour timeout gates refresh attempts only: a fresh snapshot is served as
     is, an expired-but-present snapshot gets one refresh attempt and is
     served with its age when the attempt fails, and a missing snapshot gets
-    one full scrape whose failures (DocsScrapeError, DownloadError) raise.
+    one full fetch whose failure (:class:`DownloadError`) raises.
     """
     snapshot = read_snapshot()
     if snapshot is None:
-        return scrape_snapshot()
+        return refresh_snapshot()
     if _snapshot_is_fresh(snapshot):
         return snapshot
     try:
-        return scrape_snapshot()
+        return refresh_snapshot()
     except Exception:
         return snapshot

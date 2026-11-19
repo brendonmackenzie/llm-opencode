@@ -7,20 +7,18 @@ from datetime import datetime, timezone
 import click
 import llm
 
-from .docs_scraper import DOCS_PAGE_URL, DocsScrapeError, PLANS
-from .routing import analyze_routes, corroboration_warnings, unregistered_routes
+from .routing import analyze_routes, unregistered_routes
 from .unified import (
     MODELS_URL,
-    UNIFIED_MODELS_CACHE_TIMEOUT,
+    SNAPSHOT_REFRESH_TIMEOUT,
     DownloadError,
-    read_api_models_cache,
-    read_snapshot,
     snapshot_age,
 )
 
 DEFAULT_PLAN = "go"
+PLANS = ("go", "go-plus", "go-teams")
+
 PROTOCOL_UNKNOWN = "unknown"
-PROTOCOL_NO_SCRAPE_DATA = "unknown (no scrape data)"
 
 
 @llm.hookimpl
@@ -30,57 +28,7 @@ def register_commands(cli):
     def opencode(ctx):
         "Commands relating to the llm-opencode plugin"
         if ctx.invoked_subcommand is None:
-            ctx.invoke(models, json_=False)
-
-    @opencode.group(invoke_without_command=True)
-    @click.option("json_", "--json", is_flag=True, help="Output as JSON")
-    @click.pass_context
-    def models(ctx, json_):
-        "List OpenCode Go models (offline: reads the local snapshot or cache)"
-        if ctx.invoked_subcommand is not None:
-            return
-
-        snapshot = read_snapshot()
-        if snapshot is not None:
-            rows = [
-                (
-                    route.get("model_id") or "?",
-                    route.get("protocol") or PROTOCOL_NO_SCRAPE_DATA,
-                )
-                for route in analyze_routes(snapshot.get("models", []))
-            ]
-        else:
-            api_models = read_api_models_cache()
-            if api_models is not None:
-                rows = [
-                    (model.get("id") or "?", PROTOCOL_NO_SCRAPE_DATA)
-                    for model in api_models
-                    if isinstance(model, dict)
-                ]
-            else:
-                rows = None
-        if rows is None:
-            if json_:
-                click.echo("[]")
-            else:
-                click.echo(
-                    "No OpenCode Go model data saved yet. "
-                    "Run `llm opencode detail` once to fetch and save it "
-                    "(the only command that hits the network)."
-                )
-            return
-        if json_:
-            click.echo(
-                json.dumps(
-                    [{"id": model_id, "protocol": protocol} for model_id, protocol in rows],
-                    indent=2,
-                )
-            )
-        else:
-            for model_id, protocol in rows:
-                click.echo(f"- id: {model_id}")
-                click.echo(f"  protocol: {protocol}")
-                click.echo()
+            click.echo(ctx.get_help())
 
     @opencode.command()
     @click.option(
@@ -95,36 +43,37 @@ def register_commands(cli):
     @click.option("--model", "model_id", help="Filter by exact model ID")
     @click.option(
         "--plan",
-        type=click.Choice(["go", "go_plus", "all"]),
+        type=click.Choice([*PLANS, "all"]),
         default=DEFAULT_PLAN,
         help=(
-            "Plan to show pricing and rate limits for "
-            "(JSON always carries both plans and ignores this filter)"
+            "Plan to show monthly usage for "
+            "(JSON always carries every plan and ignores this filter)"
         ),
     )
     @click.option(
         "--sort-by",
         type=click.Choice(
-            ["requests", "input", "output", "monthly-limit", "name", "model_id"]
+            ["usage", "input", "output", "name", "model_id"]
         ),
-        default="requests",
+        default="usage",
         help="Sort order (pricing format always sorts by input price)",
     )
     @click.option("-o", "--output", type=click.Path(), help="Write output to file")
     def detail(format_, sort_by, search, model_id, plan, output):
-        "Show detailed model info including pricing, rate limits, and protocols"
-        from llm_opencode import fetch_unified_models
+        "Show detailed model info including pricing, usage, and protocols"
+        from llm_opencode import fetch_models_snapshot
 
         try:
-            snapshot = fetch_unified_models()
-        except (DocsScrapeError, DownloadError):
+            snapshot = fetch_models_snapshot()
+        except DownloadError:
             click.echo(
-                "OpenCode Go page scraping failed. Please click here for more details:"
+                "OpenCode Go models API unavailable. Please try again later:"
             )
-            click.echo(DOCS_PAGE_URL)
+            click.echo(MODELS_URL)
             raise click.exceptions.Exit(1)
 
-        stale_since = _stale_since(snapshot.get("scraped_at"))
+        fetched_at = snapshot.get("fetched_at")
+        stale_since = _stale_since(fetched_at)
         unified = snapshot.get("models", [])
         if model_id:
             query = model_id.lower()
@@ -145,16 +94,13 @@ def register_commands(cli):
             "pricing": format_unified_pricing,
         }
         if format_ == "json":
-            # JSON is unaffected by --plan: it always carries both plans and
-            # its order is defined without reference to the filter.
+            # JSON is unaffected by --plan: it always carries every plan, so
+            # its order is defined by the default plan alone.
             routes = sort_models(routes, sort_by)
             result = format_unified_json(
                 routes,
-                warnings=[
-                    *snapshot.get("warnings", []),
-                    *corroboration_warnings(routes),
-                ],
-                scraped_at=snapshot.get("scraped_at"),
+                warnings=snapshot.get("warnings", []),
+                fetched_at=fetched_at,
                 unregistered=unregistered_routes(routes),
                 stale_since=stale_since,
             )
@@ -164,13 +110,10 @@ def register_commands(cli):
             result = formatters[format_](routes, plan=plan)
             if format_ == "table":
                 blocks = []
-                banner = _stale_banner(snapshot.get("scraped_at"))
+                banner = _stale_banner(fetched_at)
                 if banner:
                     blocks.append(banner)
-                warnings = [
-                    *snapshot.get("warnings", []),
-                    *corroboration_warnings(routes),
-                ]
+                warnings = snapshot.get("warnings", [])
                 if warnings:
                     blocks.append(
                         "Warnings:\n" + "\n".join(f"  {w}" for w in warnings)
@@ -184,61 +127,47 @@ def register_commands(cli):
         else:
             click.echo(result)
 
-    # Alias: `llm opencode models detail` resolves to the same command.
-    models.add_command(detail)
+
+def _show_plans(plan):
+    """The plan columns to render: every plan in ``all`` mode, else the one."""
+    return PLANS if plan == "all" else (plan,)
 
 
-def _plan_block_with_fallback(container, plan):
-    """Plan block lookup with tolerance: when the plan key is absent (or
-    empty) the first block in the container stands in; ``{}`` when there is
-    nothing usable at all."""
-    if isinstance(container, dict):
-        block = container.get(plan) or next(iter(container.values()), None)
-        if isinstance(block, dict):
-            return block
-    return {}
+def _row_usage(model, plan_column):
+    """The plan's monthly usage allowance in dollars, or ``None``.
+
+    Strict per-plan lookup: an allowance the API didn't price for this
+    plan renders a dash, never another plan's number borrowed.
+    """
+    usage = model.get("monthly_usage")
+    if isinstance(usage, dict):
+        return usage.get(plan_column)
+    return None
 
 
-def _plan_pricing(model, plan=DEFAULT_PLAN):
-    return _plan_block_with_fallback(model.get("pricing"), plan)
+def _usage_key(model, plan=DEFAULT_PLAN):
+    """Sort key: highest monthly usage first, then cheapest input.
 
-
-def _plan_rate_limits(model, plan=DEFAULT_PLAN):
-    return _plan_block_with_fallback(model.get("rate_limits"), plan)
-
-
-def _plan_block(container, plan):
-    """A strict plan block lookup: no first-value fallback, {} when absent."""
-    if isinstance(container, dict):
-        block = container.get(plan)
-        if isinstance(block, dict):
-            return block
-    return {}
-
-
-def _parse_rate_limit(value):
-    """Parse a rate limit like '1,080' into an int, or 0 when missing/invalid."""
-    if not value:
-        return 0
-    try:
-        return int(str(value).replace(",", ""))
-    except (ValueError, TypeError):
-        return 0
-
-
-def _requests_per_month_key(model, plan=DEFAULT_PLAN):
-    """Sort key: highest requests per month first, then cheapest input."""
-    per_month = _parse_rate_limit(_plan_rate_limits(model, plan).get("per_month"))
-    input_price = _plan_pricing(model, plan).get("input")
+    In ``all`` mode the most generous plan allowance represents the model
+    (an ordering heuristic only — rendered rows stay strictly per-plan).
+    """
+    if plan == "all":
+        usage = model.get("monthly_usage")
+        value = max(usage.values(), default=None) if isinstance(usage, dict) else None
+    else:
+        value = _row_usage(model, plan)
+    pricing = model.get("pricing") or {}
+    input_price = pricing.get("input")
     input_sort = input_price if input_price is not None else float("inf")
-    if per_month > 0:
-        return (False, -per_month, input_sort)
-    return (True, 0, input_sort)
+    if value is not None:
+        return (False, -value, input_sort)
+    return (True, 0.0, input_sort)
 
 
-def _price_key(model, field, plan=DEFAULT_PLAN):
+def _price_key(model, field):
     """Sort key for a pricing field: ascending, missing values pinned to the end."""
-    value = _plan_pricing(model, plan).get(field)
+    pricing = model.get("pricing") or {}
+    value = pricing.get(field)
     if value is not None:
         return (False, value)
     return (True, 0.0)
@@ -254,49 +183,48 @@ def _model_id_key(model):
     return (not model_id, model_id.lower())
 
 
-def sort_models(models, sort_by="requests", plan=DEFAULT_PLAN):
-    """Sort unified models by the given key (default: requests per month, highest first)."""
+def sort_models(models, sort_by="usage", plan=DEFAULT_PLAN):
+    """Sort unified models by the given key (default: monthly usage, highest first)."""
     keys = {
-        "requests": lambda m: _requests_per_month_key(m, plan),
-        "input": lambda m: _price_key(m, "input", plan),
-        "output": lambda m: _price_key(m, "output", plan),
-        "monthly-limit": lambda m: _price_key(m, "monthly_limit", plan),
+        "usage": lambda m: _usage_key(m, plan),
+        "input": lambda m: _price_key(m, "input"),
+        "output": lambda m: _price_key(m, "output"),
         "name": _name_key,
         "model_id": _model_id_key,
     }
     return sorted(models, key=keys[sort_by])
 
 
-def _stale_since(scraped_at):
+def _stale_since(fetched_at):
     """ISO timestamp of the snapshot's age origin, only when it passed the
     24-hour refresh timeout (``None`` when the snapshot is fresh or has no
-    usable ``scraped_at``)."""
-    age = snapshot_age(scraped_at)
-    if age is None or age <= UNIFIED_MODELS_CACHE_TIMEOUT:
+    usable ``fetched_at``)."""
+    age = snapshot_age(fetched_at)
+    if age is None or age <= SNAPSHOT_REFRESH_TIMEOUT:
         return None
-    return datetime.fromtimestamp(float(scraped_at), tz=timezone.utc).isoformat()
+    return datetime.fromtimestamp(float(fetched_at), tz=timezone.utc).isoformat()
 
 
-def _stale_banner(scraped_at):
+def _stale_banner(fetched_at):
     """One-line staleness warning for table output; ``None`` when fresh."""
-    stale_since = _stale_since(scraped_at)
+    stale_since = _stale_since(fetched_at)
     if stale_since is None:
         return None
-    age_hours = (time.time() - float(scraped_at)) / 3600
+    age_hours = (time.time() - float(fetched_at)) / 3600
     return (
-        f"⚠ Snapshot is stale: {age_hours:.1f} hours old (last scraped "
-        f"{stale_since}). The docs page was unreachable at the last refresh "
+        f"⚠ Snapshot is stale: {age_hours:.1f} hours old (last fetched "
+        f"{stale_since}). The models API was unreachable at the last refresh "
         "attempt — showing the saved snapshot."
     )
 
 
 def format_unified_json(
-    models, warnings=None, scraped_at=None, unregistered=None, stale_since=None
+    models, warnings=None, fetched_at=None, unregistered=None, stale_since=None
 ):
     """Format unified models as JSON with metadata and an unregistered section."""
     meta = {
-        "sources": [MODELS_URL, DOCS_PAGE_URL],
-        "scraped_at": scraped_at,
+        "sources": [MODELS_URL],
+        "fetched_at": fetched_at,
         "warnings": warnings or [],
     }
     if stale_since is not None:
@@ -313,24 +241,57 @@ def format_unified_json(
 
 
 def _fmt_price(value):
-    return f"${value:.2f}" if value is not None else "—"
+    """Dollar render: ``.2f``, except below a cent where four decimals keep
+    the API's real sub-cent cache prices visible ($0.003, not $0.00)."""
+    if value is None:
+        return "—"
+    if value == 0:
+        return "$0.00"
+    if value < 0.01:
+        return "$" + f"{value:.4f}".rstrip("0")
+    return f"${value:.2f}"
 
 
-def _fmt_requests_per_month(value):
-    return f"{value:,}" if value > 0 else "—"
+def _fmt_cached_write(value):
+    """TTL-keyed cache-write prices render as their cheapest tier + TTL."""
+    if value is None:
+        return "—"
+    if isinstance(value, dict):
+        if not value:
+            return "—"
+        ttl, price = min(value.items(), key=lambda item: item[1])
+        return f"${price:g} ({ttl})"
+    return _fmt_price(value)
 
 
-def _plan_selection(model, plan, current_plan):
-    """Pricing/rate-limit blocks for a row, honoring the ``--plan`` filter.
+def _fmt_usage(value):
+    return f"${value:g}" if value is not None else "—"
 
-    In ``all`` mode the plan blocks are looked up strictly — a missing plan
-    renders dashes instead of silently borrowing the other plan's numbers.
-    """
-    if plan == "all":
-        return _plan_block(model.get("pricing"), current_plan), _plan_block(
-            model.get("rate_limits"), current_plan
-        )
-    return _plan_pricing(model, plan), _plan_rate_limits(model, plan)
+
+def _fmt_tokens(value):
+    if not value:
+        return "—"
+    if value >= 1_000_000:
+        text = f"{value / 1_000_000:.1f}".rstrip("0").rstrip(".")
+        return f"{text}M"
+    if value >= 1_000:
+        return f"{round(value / 1000)}K"
+    return str(value)
+
+
+def _fmt_flag(value):
+    if value is None:
+        return "—"
+    return "yes" if value else "no"
+
+
+def _cost_notes(model):
+    """True when the API carries context-tiered prices or time-window
+    multipliers the headline prices don't reflect."""
+    overrides = model.get("cost_overrides") or {}
+    if any(overrides.get(field) for field in ("input", "output")):
+        return True
+    return bool(model.get("cost_multipliers"))
 
 
 def _render_table(headers, rows):
@@ -350,19 +311,19 @@ def format_unified_table(models, plan=DEFAULT_PLAN):
     if not models:
         return "No models found."
 
-    show_plans = PLANS if plan == "all" else (plan,)
+    show_plans = _show_plans(plan)
     headers = [
-        "Model ID", "Name", "Protocol", "Req/Month", "Input", "Output",
-        "Cache R", "Cache W", "Monthly Cap", "Retention",
+        "Model ID", "Name", "Protocol", "Usage/Mo", "Input", "Output",
+        "Cache R", "Cache W", "Ctx", "Training", "ZDR",
     ]
     if plan == "all":
         headers.insert(0, "Plan")
     rows = []
     for model in models:
         protocol = model.get("protocol") or PROTOCOL_UNKNOWN
+        pricing = model.get("pricing") or {}
+        limits = model.get("limits") or {}
         for current_plan in show_plans:
-            pricing, rate_limits = _plan_selection(model, plan, current_plan)
-            per_month = _parse_rate_limit(rate_limits.get("per_month"))
             row = []
             if plan == "all":
                 row.append(current_plan)
@@ -371,13 +332,14 @@ def format_unified_table(models, plan=DEFAULT_PLAN):
                     model.get("model_id", "")[:25],
                     model.get("model_name", "")[:20],
                     protocol,
-                    _fmt_requests_per_month(per_month),
+                    _fmt_usage(_row_usage(model, current_plan)),
                     _fmt_price(pricing.get("input")),
                     _fmt_price(pricing.get("output")),
                     _fmt_price(pricing.get("cached_read")),
-                    _fmt_price(pricing.get("cached_write")),
-                    _fmt_price(pricing.get("monthly_limit")),
-                    model.get("data_retention", "")[:10] or "—",
+                    _fmt_cached_write(pricing.get("cached_write")),
+                    _fmt_tokens(limits.get("context")),
+                    _fmt_flag(model.get("training")),
+                    _fmt_flag(model.get("zdr")),
                 ]
             )
             rows.append(row)
@@ -398,22 +360,30 @@ def format_unified_table(models, plan=DEFAULT_PLAN):
 CSV_HEADERS = [
     "model_id",
     "model_name",
+    "canonical_id",
+    "provider",
+    "family",
     "plan",
     "protocol",
-    "matched",
+    "recommended_api",
     "input_price",
     "output_price",
     "cached_read",
     "cached_write",
-    "monthly_limit",
-    "limit_note",
+    "monthly_usage",
+    "training",
+    "zdr",
+    "limited_regions",
+    "featured",
+    "open_weights",
+    "knowledge",
+    "release_date",
+    "last_updated",
+    "context_limit",
+    "output_limit",
     "endpoint",
     "ai_sdk_package",
-    "data_retention",
-    "model_training",
-    "rate_per_5h",
-    "rate_per_week",
-    "rate_per_month",
+    "description",
 ]
 
 
@@ -423,30 +393,40 @@ def format_unified_csv(models, plan=DEFAULT_PLAN):
     writer = csv.writer(buf)
     writer.writerow(CSV_HEADERS)
     for model in models:
-        show_plans = PLANS if plan == "all" else (plan,)
+        show_plans = _show_plans(plan)
         protocol = model.get("protocol") or ""
+        pricing = model.get("pricing") or {}
+        limits = model.get("limits") or {}
+        cached_write = pricing.get("cached_write")
         for current_plan in show_plans:
-            pricing, rate_limits = _plan_selection(model, plan, current_plan)
             writer.writerow(
                 [
                     model.get("model_id", ""),
                     model.get("model_name", ""),
+                    model.get("canonical_id", ""),
+                    model.get("provider", ""),
+                    model.get("family", ""),
                     current_plan,
                     protocol,
-                    model.get("matched", ""),
+                    model.get("recommended_api", ""),
                     pricing.get("input", ""),
                     pricing.get("output", ""),
                     pricing.get("cached_read", ""),
-                    pricing.get("cached_write", ""),
-                    pricing.get("monthly_limit", ""),
-                    pricing.get("limit_note", ""),
+                    json.dumps(cached_write) if isinstance(cached_write, dict) else cached_write,
+                    _row_usage(model, current_plan) or "",
+                    model.get("training", ""),
+                    model.get("zdr", ""),
+                    model.get("limited_regions", ""),
+                    model.get("featured", ""),
+                    model.get("open_weights", ""),
+                    model.get("knowledge", ""),
+                    model.get("release_date", ""),
+                    model.get("last_updated", ""),
+                    limits.get("context", ""),
+                    limits.get("output", ""),
                     model.get("endpoint", ""),
                     model.get("ai_sdk_package", ""),
-                    model.get("data_retention", ""),
-                    model.get("model_training", ""),
-                    rate_limits.get("per_5_hours", ""),
-                    rate_limits.get("per_week", ""),
-                    rate_limits.get("per_month", ""),
+                    model.get("description", ""),
                 ]
             )
     return buf.getvalue()
@@ -455,30 +435,34 @@ def format_unified_csv(models, plan=DEFAULT_PLAN):
 def format_unified_pricing(models, plan=DEFAULT_PLAN):
     """Format unified models as a pricing comparison sorted by input cost."""
     priced = []
-    show_plans = PLANS if plan == "all" else (plan,)
+    show_plans = _show_plans(plan)
     for model in models:
         name = model.get("model_id") or model.get("model_name") or "?"
         for current_plan in show_plans:
-            pricing, _rate_limits = _plan_selection(model, plan, current_plan)
+            pricing = model.get("pricing") or {}
             if pricing.get("input") is None:
                 continue
             label = f"{name} ({current_plan})" if plan == "all" else name
-            priced.append((label, model, pricing))
+            priced.append(
+                (label, model, pricing, _row_usage(model, current_plan))
+            )
     priced.sort(key=lambda entry: entry[2]["input"])
 
     if not priced:
         return "No pricing data found."
 
     lines = ["Pricing Comparison (per 1M tokens)", "═" * 70]
-    for name, model, pricing in priced:
+    for name, model, pricing, usage in priced:
         lines.append(f"\n  {name}")
-        note = pricing.get("pricing_note")
-        suffix = f" ({note})" if note else ""
-        lines.append(f"    Input:        {_fmt_price(pricing.get('input'))}{suffix}")
+        lines.append(f"    Input:        {_fmt_price(pricing.get('input'))}")
         lines.append(f"    Output:       {_fmt_price(pricing.get('output'))}")
         lines.append(f"    Cached Read:  {_fmt_price(pricing.get('cached_read'))}")
-        lines.append(f"    Cached Write: {_fmt_price(pricing.get('cached_write'))}")
-        limit = pricing.get("monthly_limit")
-        lines.append(f"    Monthly cap:  {_fmt_price(limit)}")
-        lines.append(f"    Retention:    {model.get('data_retention', '—')}")
+        lines.append(f"    Cached Write: {_fmt_cached_write(pricing.get('cached_write'))}")
+        if usage is not None:
+            lines.append(f"    Included use: {_fmt_usage(usage)}/mo")
+        if _cost_notes(model):
+            lines.append(
+                "    Note: context-tiered prices or time-window multipliers "
+                "apply — see --format json"
+            )
     return "\n".join(lines)
