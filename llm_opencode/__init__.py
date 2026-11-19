@@ -19,50 +19,40 @@ from .cli import (
     register_commands,
     sort_models,
 )
-from .docs_scraper import (
-    DOCS_PAGE_URL,
-    DocsScrapeError,
-    fetch_docs_page,
-    parse_docs_tables,
-    parse_html_tables,
-)
-
 from .routing import (
     BASE_URL_ANTHROPIC,
     BASE_URL_OPENAI,
     SKIP_GOOGLE_STYLE,
-    SKIP_NO_DOCS_ROW,
-    SKIP_UNRECOGNIZED_PATH,
+    SKIP_NO_API_BASE,
+    SKIP_UNRECOGNIZED_API,
     analyze_routes,
-    corroboration_warnings,
     derive_route,
     register_models,
     unregistered_routes,
 )
 from .unified import (
     MODELS_URL,
-    UNIFIED_MODELS_CACHE_TIMEOUT,
+    SNAPSHOT_REFRESH_TIMEOUT,
     DownloadError,
+    api_model_to_entry,
     fetch_cached_json,
-    fetch_unified_models,
+    fetch_models_snapshot,
     get_opencode_models,
-    merge_model_data,
     read_api_models_cache,
     read_snapshot,
-    scrape_snapshot,
+    refresh_snapshot,
+    snapshot_age,
 )
 
 __all__ = [
     "BASE_URL_ANTHROPIC",
     "BASE_URL_OPENAI",
-    "DOCS_PAGE_URL",
-    "DocsScrapeError",
-    "DownloadError",
     "MODELS_URL",
     "SKIP_GOOGLE_STYLE",
-    "SKIP_NO_DOCS_ROW",
-    "SKIP_UNRECOGNIZED_PATH",
-    "UNIFIED_MODELS_CACHE_TIMEOUT",
+    "SKIP_NO_API_BASE",
+    "SKIP_UNRECOGNIZED_API",
+    "SNAPSHOT_REFRESH_TIMEOUT",
+    "DownloadError",
     "OpenCodeGoAnthropicAsyncChat",
     "OpenCodeGoAnthropicChat",
     "OpenCodeGoAsyncChat",
@@ -70,24 +60,21 @@ __all__ = [
     "OpenCodeGoResponsesAsyncChat",
     "OpenCodeGoResponsesChat",
     "analyze_routes",
-    "corroboration_warnings",
+    "api_model_to_entry",
     "derive_route",
     "fetch_cached_json",
-    "fetch_docs_page",
-    "fetch_unified_models",
+    "fetch_models_snapshot",
     "format_unified_csv",
     "format_unified_json",
     "format_unified_pricing",
     "format_unified_table",
     "get_opencode_models",
-    "merge_model_data",
-    "parse_docs_tables",
-    "parse_html_tables",
     "read_api_models_cache",
     "read_snapshot",
+    "refresh_snapshot",
     "register_commands",
     "register_models",
-    "scrape_snapshot",
+    "snapshot_age",
     "sort_models",
     "unregistered_routes",
 ]
@@ -212,8 +199,9 @@ class _OpenCodeGoAnthropicChatBase:
     key_env_var = "OPENCODE_KEY"
     can_stream = True
 
-    def __init__(self, model_id, anthropic_model_id=None, api_base=None):
+    def __init__(self, model_id, model_name=None, anthropic_model_id=None, api_base=None):
         self.model_id = model_id
+        self.model_name = model_name or model_id
         self.anthropic_model_id = anthropic_model_id or model_id.replace(
             "opencode-go/", ""
         )

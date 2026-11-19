@@ -20,7 +20,7 @@ def _make_model(async_=False):
     return cls(
         model_id="opencode-go/deepseek-v4-flash",
         model_name="deepseek-v4-flash",
-        api_base="https://opencode.ai/zen/go/v1",
+        api_base="https://opencode.ai/inference/go/openai/v1",
     )
 
 
@@ -29,7 +29,7 @@ def _make_responses_model(async_=False):
     return cls(
         model_id="opencode-go/gpt-6-luna",
         model_name="gpt-6-luna",
-        api_base="https://opencode.ai/zen/go/v1",
+        api_base="https://opencode.ai/inference/go/openai/v1",
     )
 
 
