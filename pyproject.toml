@@ -30,7 +30,7 @@ Homepage = "https://github.com/brendonmackenzie/llm-opencode"
 opencode = "llm_opencode"
 
 [project.optional-dependencies]
-test = ["pytest", "pytest-cov", "inline-snapshot", "pytest-asyncio", "pytest-timeout", "ty"]
+test = ["pytest", "pytest-cov", "pytest-asyncio", "pytest-timeout", "ty"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -38,10 +38,6 @@ testpaths = ["tests"]
 timeout = 30
 timeout_method = "thread"
 addopts = "-ra --strict-markers --strict-config --cov=llm_opencode"
-markers = [
-    "vcr: tests that replay VCR cassettes",
-    "slow: tests that are slow to run (deselect with -m 'not slow')",
-]
 
 [tool.coverage.run]
 source = ["llm_opencode"]

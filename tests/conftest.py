@@ -59,11 +59,11 @@ def anthropic_response():
 
 @pytest.fixture
 def make_opencode_models():
-    """Factory for creating mock opencode models lists for VCR tests.
+    """Factory for thin mock opencode models lists.
 
-    Returns a list of model definition dicts (each with an ``id`` key) so the
-    VCR-marked tests don't trigger a real HTTP GET to the models list endpoint
-    when the local cache file is missing.
+    Returns a list of model definition dicts (each with an ``id`` key) so
+    bootstrap tests don't hit the real models endpoint when registration
+    runs with no snapshot on disk.
     """
     def _make(*model_ids):
         return [{"id": model_id} for model_id in model_ids]
