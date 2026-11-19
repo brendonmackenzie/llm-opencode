@@ -133,17 +133,25 @@ def register_models(register):
         # The OpenAI-family classes send model_name on the wire, so it must
         # be the raw API model id — display names live in `llm opencode detail`.
         wire_name = route["model_id"]
+        # Schema support follows the API's per-model claim. Only the OpenAI
+        # wire families have llm-side schema plumbing; the Anthropic class
+        # has no schema translation, so it stays honestly False.
+        supports_schema = bool(
+            (route.get("capabilities") or {}).get("structured_output")
+        )
         if route["protocol"] == "openai":
             register(
                 OpenCodeGoChat(
                     model_id=llm_model_id,
                     model_name=wire_name,
                     api_base=route["api_base"],
+                    supports_schema=supports_schema,
                 ),
                 OpenCodeGoAsyncChat(
                     model_id=llm_model_id,
                     model_name=wire_name,
                     api_base=route["api_base"],
+                    supports_schema=supports_schema,
                 ),
             )
         elif route["protocol"] == "openai-responses":
@@ -152,11 +160,13 @@ def register_models(register):
                     model_id=llm_model_id,
                     model_name=wire_name,
                     api_base=route["api_base"],
+                    supports_schema=supports_schema,
                 ),
                 OpenCodeGoResponsesAsyncChat(
                     model_id=llm_model_id,
                     model_name=wire_name,
                     api_base=route["api_base"],
+                    supports_schema=supports_schema,
                 ),
             )
         elif route["protocol"] == "anthropic":

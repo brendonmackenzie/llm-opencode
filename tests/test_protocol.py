@@ -86,6 +86,73 @@ def test_responses_protocol_prompt(mock_fetch, mock_get_key, mock_openai_cls, us
     )
 
 
+@patch("openai.OpenAI")
+@patch("llm.get_key", return_value="sk-test")
+@patch("llm_opencode.fetch_models_snapshot")
+def test_chat_schema_prompt_sends_response_format(
+    mock_fetch, mock_get_key, mock_openai_cls, user_dir
+):
+    schema = {"type": "object", "properties": {"name": {"type": "string"}}}
+    mock_fetch.return_value = snapshot(
+        entry(api_model(model_id="deepseek-v4-flash", name="DeepSeek V4 Flash"))
+    )
+    chat_completions = mock_openai_cls.return_value.chat.completions
+    chat_completions.create.return_value = _fake_chat_completion(
+        '{"name": "Ada"}'
+    )
+    response = llm.get_model("opencode-go/deepseek-v4-flash").prompt(
+        "Extract the name", schema=schema, stream=False
+    )
+
+    assert str(response) == '{"name": "Ada"}'
+    kwargs = chat_completions.create.call_args[1]
+    assert kwargs["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {"name": "output", "schema": schema},
+    }
+
+
+@patch("openai.OpenAI")
+@patch("llm.get_key", return_value="sk-test")
+@patch("llm_opencode.fetch_models_snapshot")
+def test_responses_schema_prompt_sends_text_format(
+    mock_fetch, mock_get_key, mock_openai_cls, user_dir
+):
+    schema = {"type": "object", "properties": {"name": {"type": "string"}}}
+    mock_fetch.return_value = snapshot(
+        entry(responses_api_model(model_id="gpt-6-luna", name="GPT-6 Luna"))
+    )
+    client = mock_openai_cls.return_value
+    client.responses.create.return_value = make_responses_completion('{"name": "Ada"}')
+    response = llm.get_model("opencode-go/gpt-6-luna").prompt(
+        "Extract the name", schema=schema, stream=False
+    )
+
+    assert str(response) == '{"name": "Ada"}'
+    create_kwargs = client.responses.create.call_args[1]
+    assert create_kwargs["text"]["format"] == {
+        "type": "json_schema",
+        "name": "output",
+        "schema": schema,
+        "strict": False,
+    }
+
+
+@patch("llm.get_key", return_value="sk-test")
+@patch("llm_opencode.fetch_models_snapshot")
+def test_schema_prompt_refused_without_capability(mock_fetch, mock_get_key, user_dir):
+    import pytest
+
+    schema = {"type": "object", "properties": {"name": {"type": "string"}}}
+    mock_fetch.return_value = snapshot(
+        entry(api_model(), capabilities={"structured_output": False})
+    )
+    with pytest.raises(ValueError, match="does not support schemas"):
+        llm.get_model("opencode-go/glm-5.3").prompt(
+            "Extract the name", schema=schema, stream=False
+        )
+
+
 @patch("openai.AsyncOpenAI")
 @patch("llm.get_key", return_value="sk-test")
 @patch("llm_opencode.fetch_models_snapshot")
