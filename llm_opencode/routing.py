@@ -37,12 +37,24 @@ def _api_base(endpoint, protocol):
     return endpoint
 
 
+def schema_supported(route):
+    """Whether the plugin can serve ``--schema`` prompts for this route.
+
+    Only the OpenAI wire families have llm-side schema plumbing; the
+    Anthropic class has no schema translation to its tool-based form, so
+    its models are honestly False whatever the API advertises.
+    """
+    if route.get("protocol") not in ("openai", "openai-responses"):
+        return False
+    return bool((route.get("capabilities") or {}).get("structured_output"))
+
+
 def derive_route(entry):
     """Derive the registration route for one unified snapshot entry.
 
     Returns a copy of the entry with the derived fields the detail renderer
-    consumes: ``registered``, ``protocol``, ``api_base`` and
-    ``skip_reason``. A model whose ``recommended_api`` the plugin cannot
+    consumes: ``registered``, ``protocol``, ``api_base``, ``supports_schema``
+    and ``skip_reason``. A model whose ``recommended_api`` the plugin cannot
     speak is not registered, never guessed: google-style →
     :data:`SKIP_GOOGLE_STYLE`, an unknown value →
     :data:`SKIP_UNRECOGNIZED_API`, a missing ``base_url`` →
@@ -52,6 +64,7 @@ def derive_route(entry):
     route["registered"] = False
     route["protocol"] = None
     route["api_base"] = None
+    route["supports_schema"] = False
     route["skip_reason"] = None
 
     recommended = entry.get("recommended_api") or ""
@@ -69,6 +82,7 @@ def derive_route(entry):
 
     route["protocol"] = protocol
     route["api_base"] = _api_base(endpoint, protocol)
+    route["supports_schema"] = schema_supported(route)
     route["registered"] = True
     return route
 
@@ -133,12 +147,7 @@ def register_models(register):
         # The OpenAI-family classes send model_name on the wire, so it must
         # be the raw API model id — display names live in `llm opencode detail`.
         wire_name = route["model_id"]
-        # Schema support follows the API's per-model claim. Only the OpenAI
-        # wire families have llm-side schema plumbing; the Anthropic class
-        # has no schema translation, so it stays honestly False.
-        supports_schema = bool(
-            (route.get("capabilities") or {}).get("structured_output")
-        )
+        supports_schema = route["supports_schema"]
         if route["protocol"] == "openai":
             register(
                 OpenCodeGoChat(

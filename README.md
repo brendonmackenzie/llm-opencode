@@ -90,6 +90,7 @@ llm opencode detail --search qwen
 llm opencode detail --plan go-plus
 llm opencode detail --plan go-teams
 llm opencode detail --model claude-haiku-5-5
+llm opencode detail --schema-capable     # only models that accept --schema
 llm opencode detail --format csv -o models.csv
 ```
 
@@ -106,6 +107,19 @@ llm opencode detail --sort-by model_id     # by model ID
 ```
 
 The `pricing` format always sorts by input price ascending.
+
+### Structured output
+
+Models the API marks as structured-output capable work with llm's `--schema`:
+
+```bash
+llm -m opencode-go/glm-5.3 "Ada Lovelace, born 1815, computing pioneer" \
+  --schema 'name, birth_year int, known_for'
+```
+
+Find them with `llm opencode detail --schema-capable`, or read the detail
+table's `Schema` column. Anthropic-protocol models stay honestly off — their
+wire class has no schema translation, even when the API advertises support.
 
 ### Snapshot resilience
 
