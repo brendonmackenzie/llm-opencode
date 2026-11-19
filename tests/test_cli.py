@@ -1,7 +1,6 @@
 import csv
 import io
 import json
-import pathlib
 from unittest.mock import patch
 
 import pytest
@@ -28,93 +27,24 @@ def test_llm_models(mock_get_models, make_opencode_models, user_dir):
     assert result.exit_code == 0, result.output
 
 
-def _write_api_cache(user_dir, models):
-    """Write an opencode_models.json API-list cache into the isolated user dir."""
-    path = pathlib.Path(user_dir) / "opencode_models.json"
-    path.write_text(json.dumps({"data": models}))
-    return path
+def test_opencode_models_listing_removed(user_dir):
+    """The offline listing and its alias are gone; detail is the sole command."""
+    runner = CliRunner()
+    for args in (["opencode", "models"], ["opencode", "models", "detail"]):
+        result = runner.invoke(cli, args)
+        assert result.exit_code == 2, result.output
+        assert "No such command" in result.output
 
 
-def _invoke_listing_banned_from_network(user_dir, *args):
-    """Invoke an offline listing with the network patched as an assert-tripwire."""
-    with patch("httpx2.get", side_effect=AssertionError("listing hit the network")):
-        return CliRunner().invoke(cli, [*args])
-
-
-def test_opencode_models_listing_uses_api_cache_without_network(user_dir):
-    _write_api_cache(user_dir, [{"id": "glm-5.3"}, {"id": "minimax-m3"}])
-
-    with patch("llm_opencode.get_opencode_models") as mock_get:
-        result = _invoke_listing_banned_from_network(user_dir, "opencode", "models")
+def test_opencode_bare_shows_help(user_dir):
+    runner = CliRunner()
+    result = runner.invoke(cli, ["opencode"])
 
     assert result.exit_code == 0, result.output
-    assert "glm-5.3" in result.output
-    assert "minimax-m3" in result.output
-    assert "unknown (no snapshot data)" in result.output
-    mock_get.assert_not_called()
+    assert "detail" in result.output  # the one command it carries
 
 
-def test_opencode_models_listing_serves_expired_cache_without_refresh(user_dir):
-    import os
-
-    path = _write_api_cache(user_dir, [{"id": "glm-5.3"}])
-    os.utime(path, (0, 0))  # ancient mtime: no freshness check, no refresh
-
-    with patch("llm_opencode.get_opencode_models") as mock_get:
-        result = _invoke_listing_banned_from_network(user_dir, "opencode", "models")
-
-    assert result.exit_code == 0, result.output
-    assert "- id: glm-5.3" in result.output
-    mock_get.assert_not_called()
-
-
-def test_opencode_models_listing_does_not_fabricate_protocols(user_dir):
-    _write_api_cache(user_dir, [{"id": "gpt-6-luna"}, {"id": "minimax-m3"}])
-
-    result = _invoke_listing_banned_from_network(user_dir, "opencode", "models")
-
-    assert result.exit_code == 0, result.output
-    assert "openai" not in result.output
-    assert "anthropic" not in result.output
-    assert "/v1/responses" not in result.output
-
-
-def test_opencode_models_listing_json(user_dir):
-    _write_api_cache(user_dir, [{"id": "glm-5.3"}, {"id": "minimax-m3"}])
-
-    result = _invoke_listing_banned_from_network(user_dir, "opencode", "models", "--json")
-
-    assert result.exit_code == 0, result.output
-    data = json.loads(result.output)
-    assert data[0]["id"] == "glm-5.3"
-    assert data[0]["protocol"] == "unknown (no snapshot data)"
-
-
-def test_opencode_models_listing_fresh_install_prints_hint(user_dir):
-    result = _invoke_listing_banned_from_network(user_dir, "opencode", "models")
-
-    assert result.exit_code == 0, result.output
-    assert "No OpenCode Go model data saved yet" in result.output
-    assert "llm opencode detail" in result.output
-
-
-def test_opencode_models_listing_fresh_install_json_empty(user_dir):
-    result = _invoke_listing_banned_from_network(user_dir, "opencode", "models", "--json")
-
-    assert result.exit_code == 0, result.output
-    assert json.loads(result.output) == []
-
-
-def test_opencode_default_to_models(user_dir):
-    _write_api_cache(user_dir, [{"id": "test-model"}])
-
-    result = _invoke_listing_banned_from_network(user_dir, "opencode")
-
-    assert result.exit_code == 0, result.output
-    assert "test-model" in result.output
-
-
-# ─── opencode models detail ──────────────────────────────────────────────────
+# ─── opencode detail ─────────────────────────────────────────────────────────
 
 
 def _unified_models():
@@ -134,7 +64,7 @@ def test_opencode_models_detail_default_table(mock_fetch):
     mock_fetch.return_value = _payload(_unified_models())
 
     runner = CliRunner()
-    result = runner.invoke(cli, ["opencode", "models", "detail"])
+    result = runner.invoke(cli, ["opencode", "detail"])
     assert result.exit_code == 0, result.output
     assert "Model ID" in result.output
     assert "Protocol" in result.output
@@ -157,10 +87,7 @@ def test_opencode_detail_primary_command(mock_fetch):
 
     runner = CliRunner()
     primary = runner.invoke(cli, ["opencode", "detail"])
-    alias = runner.invoke(cli, ["opencode", "models", "detail"])
     assert primary.exit_code == 0, primary.output
-    assert alias.exit_code == 0, alias.output
-    assert primary.output == alias.output
 
 
 @patch("llm_opencode.fetch_models_snapshot")
@@ -324,7 +251,7 @@ def test_opencode_models_detail_default_sort_usage(mock_fetch):
     mock_fetch.return_value = _payload(_unified_models())
 
     runner = CliRunner()
-    result = runner.invoke(cli, ["opencode", "models", "detail"])
+    result = runner.invoke(cli, ["opencode", "detail"])
     assert result.exit_code == 0, result.output
     # glm-5.3 carries the largest go-plan usage ($500) so it sorts first.
     assert result.output.index("glm-5.3") < result.output.index("claude-haiku-5-5")
@@ -355,7 +282,7 @@ def test_opencode_models_detail_sort_by_name(mock_fetch):
     mock_fetch.return_value = _payload(_unified_models())
 
     runner = CliRunner()
-    result = runner.invoke(cli, ["opencode", "models", "detail", "--sort-by", "name"])
+    result = runner.invoke(cli, ["opencode", "detail", "--sort-by", "name"])
     assert result.exit_code == 0, result.output
     assert result.output.index("Claude Haiku 5.5") < result.output.index("GLM-5.3")
 
@@ -366,7 +293,7 @@ def test_opencode_models_detail_usage_missing_pinned_last(mock_fetch):
     mock_fetch.return_value = _payload(models)
 
     runner = CliRunner()
-    result = runner.invoke(cli, ["opencode", "models", "detail"])
+    result = runner.invoke(cli, ["opencode", "detail"])
     assert result.exit_code == 0, result.output
     assert result.output.index("beam-free") > result.output.index("claude-haiku-5-5")
 
@@ -376,7 +303,7 @@ def test_opencode_models_detail_json(mock_fetch):
     mock_fetch.return_value = _payload(_unified_models())
 
     runner = CliRunner()
-    result = runner.invoke(cli, ["opencode", "models", "detail", "--format", "json"])
+    result = runner.invoke(cli, ["opencode", "detail", "--format", "json"])
     assert result.exit_code == 0, result.output
     data = json.loads(result.output)
     assert data["count"] == 3
@@ -402,7 +329,7 @@ def test_opencode_models_detail_json_unregistered_section(mock_fetch):
     mock_fetch.return_value = _payload(models)
 
     runner = CliRunner()
-    result = runner.invoke(cli, ["opencode", "models", "detail", "--format", "json"])
+    result = runner.invoke(cli, ["opencode", "detail", "--format", "json"])
     assert result.exit_code == 0, result.output
     data = json.loads(result.output)
     assert data["count"] == 5
@@ -535,7 +462,7 @@ def test_opencode_models_detail_pricing_sorted_by_input(mock_fetch):
     mock_fetch.return_value = _payload(_unified_models())
 
     runner = CliRunner()
-    result = runner.invoke(cli, ["opencode", "models", "detail", "--format", "pricing"])
+    result = runner.invoke(cli, ["opencode", "detail", "--format", "pricing"])
     assert result.exit_code == 0, result.output
     # claude-haiku and gpt-6-luna share the $0.10 input price; glm-5.3 is dearer.
     assert result.output.index("glm-5.3") > result.output.index("claude-haiku-5-5")
@@ -570,7 +497,7 @@ def test_opencode_models_detail_search_filter(mock_fetch):
     mock_fetch.return_value = _payload(_unified_models())
 
     runner = CliRunner()
-    result = runner.invoke(cli, ["opencode", "models", "detail", "--search", "glm"])
+    result = runner.invoke(cli, ["opencode", "detail", "--search", "glm"])
     assert result.exit_code == 0, result.output
     assert "glm-5.3" in result.output
     assert "claude-haiku-5-5" not in result.output
@@ -582,7 +509,7 @@ def test_opencode_models_detail_search_matches_name(mock_fetch):
 
     runner = CliRunner()
     result = runner.invoke(
-        cli, ["opencode", "models", "detail", "--search", "haiku"]
+        cli, ["opencode", "detail", "--search", "haiku"]
     )
     assert result.exit_code == 0, result.output
     assert "claude-haiku-5-5" in result.output
@@ -604,7 +531,7 @@ def test_opencode_models_detail_model_exact_filter(mock_fetch):
     mock_fetch.return_value = _payload(_unified_models())
 
     runner = CliRunner()
-    result = runner.invoke(cli, ["opencode", "models", "detail", "--model", "glm-5.3"])
+    result = runner.invoke(cli, ["opencode", "detail", "--model", "glm-5.3"])
     assert result.exit_code == 0, result.output
     assert "glm-5.3" in result.output
     assert "claude-haiku-5-5" not in result.output
@@ -615,7 +542,7 @@ def test_opencode_models_detail_empty(mock_fetch):
     mock_fetch.return_value = _payload([])
 
     runner = CliRunner()
-    result = runner.invoke(cli, ["opencode", "models", "detail"])
+    result = runner.invoke(cli, ["opencode", "detail"])
     assert result.exit_code == 0, result.output
     assert "No models found." in result.output
 
@@ -627,7 +554,7 @@ def test_opencode_models_detail_pricing_no_priced_models(mock_fetch):
     )
 
     runner = CliRunner()
-    result = runner.invoke(cli, ["opencode", "models", "detail", "--format", "pricing"])
+    result = runner.invoke(cli, ["opencode", "detail", "--format", "pricing"])
     assert result.exit_code == 0, result.output
     assert "No pricing data found." in result.output
 
@@ -647,7 +574,7 @@ def test_opencode_models_detail_pricing_missing_values(mock_fetch):
     )
 
     runner = CliRunner()
-    result = runner.invoke(cli, ["opencode", "models", "detail", "--format", "pricing"])
+    result = runner.invoke(cli, ["opencode", "detail", "--format", "pricing"])
     assert result.exit_code == 0, result.output
     assert "mystery-model" in result.output
     assert "Cached Read:  —" in result.output
@@ -672,7 +599,7 @@ def test_opencode_models_detail_output_file(mock_fetch, tmp_path):
 
     runner = CliRunner()
     result = runner.invoke(
-        cli, ["opencode", "models", "detail", "--format", "csv", "-o", str(output_file)]
+        cli, ["opencode", "detail", "--format", "csv", "-o", str(output_file)]
     )
     assert result.exit_code == 0, result.output
     assert output_file.exists()
@@ -683,7 +610,7 @@ def test_opencode_models_detail_output_file(mock_fetch, tmp_path):
 @patch("llm_opencode.fetch_models_snapshot", side_effect=DownloadError("no net"))
 def test_opencode_models_detail_fetch_failure_shows_api_url(mock_fetch):
     runner = CliRunner()
-    result = runner.invoke(cli, ["opencode", "models", "detail"])
+    result = runner.invoke(cli, ["opencode", "detail"])
     assert result.exit_code == 1
     assert "models API unavailable" in result.output
     assert MODELS_URL in result.output

@@ -12,8 +12,6 @@ from .unified import (
     MODELS_URL,
     SNAPSHOT_REFRESH_TIMEOUT,
     DownloadError,
-    read_api_models_cache,
-    read_snapshot,
     snapshot_age,
 )
 
@@ -21,7 +19,6 @@ DEFAULT_PLAN = "go"
 PLANS = ("go", "go-plus", "go-teams")
 
 PROTOCOL_UNKNOWN = "unknown"
-PROTOCOL_NO_SNAPSHOT_DATA = "unknown (no snapshot data)"
 
 
 @llm.hookimpl
@@ -31,57 +28,7 @@ def register_commands(cli):
     def opencode(ctx):
         "Commands relating to the llm-opencode plugin"
         if ctx.invoked_subcommand is None:
-            ctx.invoke(models, json_=False)
-
-    @opencode.group(invoke_without_command=True)
-    @click.option("json_", "--json", is_flag=True, help="Output as JSON")
-    @click.pass_context
-    def models(ctx, json_):
-        "List OpenCode Go models (offline: reads the local snapshot or cache)"
-        if ctx.invoked_subcommand is not None:
-            return
-
-        snapshot = read_snapshot()
-        if snapshot is not None:
-            rows = [
-                (
-                    route.get("model_id") or "?",
-                    route.get("protocol") or PROTOCOL_UNKNOWN,
-                )
-                for route in analyze_routes(snapshot.get("models", []))
-            ]
-        else:
-            api_models = read_api_models_cache()
-            if api_models is not None:
-                rows = [
-                    (model.get("id") or "?", PROTOCOL_NO_SNAPSHOT_DATA)
-                    for model in api_models
-                    if isinstance(model, dict)
-                ]
-            else:
-                rows = None
-        if rows is None:
-            if json_:
-                click.echo("[]")
-            else:
-                click.echo(
-                    "No OpenCode Go model data saved yet. "
-                    "Run `llm opencode detail` once to fetch and save it "
-                    "(the only command that hits the network)."
-                )
-            return
-        if json_:
-            click.echo(
-                json.dumps(
-                    [{"id": model_id, "protocol": protocol} for model_id, protocol in rows],
-                    indent=2,
-                )
-            )
-        else:
-            for model_id, protocol in rows:
-                click.echo(f"- id: {model_id}")
-                click.echo(f"  protocol: {protocol}")
-                click.echo()
+            click.echo(ctx.get_help())
 
     @opencode.command()
     @click.option(
@@ -179,9 +126,6 @@ def register_commands(cli):
                 file.write(result)
         else:
             click.echo(result)
-
-    # Alias: `llm opencode models detail` resolves to the same command.
-    models.add_command(detail)
 
 
 def _show_plans(plan):

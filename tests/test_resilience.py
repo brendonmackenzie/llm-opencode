@@ -248,68 +248,6 @@ def test_csv_and_pricing_formats_carry_no_banner():
     assert "Snapshot is stale" not in pricing_result.output
 
 
-# ─── plain listing: snapshot-only, never fetching ────────────────────────────
-
-
-def test_listing_reads_snapshot_only_never_fetches(user_dir):
-    _write_snapshot(
-        user_dir,
-        int(time.time()) - 30 * 3600,
-        models=[entry(), entry(api_model(model_id="omen-alpha", api={}, recommended_api=""))],
-    )
-
-    with patch("llm_opencode.get_opencode_models") as mock_api:
-        runner = CliRunner()
-        result = runner.invoke(cli, ["opencode", "models"])
-
-    assert result.exit_code == 0, result.output
-    assert "- id: glm-5.3" in result.output
-    assert "protocol: openai" in result.output
-    assert "omen-alpha" in result.output
-    assert "protocol: unknown" in result.output
-    mock_api.assert_not_called()
-
-
-def test_listing_without_snapshot_reads_api_cache_without_refresh(user_dir):
-    api_cache = user_dir / "opencode_models.json"
-    api_cache.write_text(json.dumps({"data": [{"id": "glm-5.3"}]}))
-
-    with patch("llm_opencode.get_opencode_models") as mock_api:
-        runner = CliRunner()
-        result = runner.invoke(cli, ["opencode", "models"])
-
-    assert result.exit_code == 0, result.output
-    assert "- id: glm-5.3" in result.output
-    assert "protocol: unknown (no snapshot data)" in result.output
-    mock_api.assert_not_called()
-
-
-def test_listing_fresh_install_prints_hint_and_hits_nothing(user_dir):
-    with (
-        patch("httpx2.get", side_effect=AssertionError("listing hit the network")),
-        patch("llm_opencode.get_opencode_models") as mock_api,
-    ):
-        runner = CliRunner()
-        result = runner.invoke(cli, ["opencode", "models"])
-
-    assert result.exit_code == 0, result.output
-    assert "llm opencode detail" in result.output
-    mock_api.assert_not_called()
-
-
-def test_stale_listing_json_carries_snapshot_protocols(user_dir):
-    _write_snapshot(user_dir, int(time.time()) - 30 * 3600)
-
-    with patch("llm_opencode.get_opencode_models") as mock_api:
-        runner = CliRunner()
-        result = runner.invoke(cli, ["opencode", "models", "--json"])
-
-    assert result.exit_code == 0, result.output
-    data = json.loads(result.output)
-    assert data == [{"id": "glm-5.3", "protocol": "openai"}]
-    mock_api.assert_not_called()
-
-
 # ─── docs guidance for the deleted-snapshot state ────────────────────────────
 
 

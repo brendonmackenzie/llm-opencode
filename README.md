@@ -43,13 +43,6 @@ Alternatively, set the `OPENCODE_KEY` environment variable.
 
 ## Usage
 
-List available models (fully offline — reads the local snapshot, or the cached
-API model list when no snapshot has been fetched yet):
-
-```bash
-llm opencode models
-```
-
 List all models registered with LLM:
 
 ```bash
@@ -84,8 +77,11 @@ llm opencode detail                       # pricing table (default)
 llm opencode detail --format json         # full JSON
 llm opencode detail --format csv          # CSV export
 llm opencode detail --format pricing      # sorted by input cost
-llm opencode models detail                # alias for `llm opencode detail`
 ```
+
+`llm opencode detail` needs no API key and needs no network once a snapshot
+exists — it only fetches when the snapshot is missing or older than 24 hours.
+Bare `llm opencode` shows help.
 
 Filter the details:
 
@@ -132,15 +128,9 @@ payload carries `fetched_at`, `warnings`, and the `models` list:
   and running `llm opencode detail` performs the fetch that repopulates it
   and re-registration picks models back up.
 
-- Plain listing (`llm opencode models`, or bare `llm opencode`) never touches
-  the network: it reads the snapshot (IDs + protocols), or the cached API model
-  list when no snapshot has ever been written (IDs with
-  `unknown (no snapshot data)` protocol markers). A fresh install — neither
-  file present — prints a hint to run `llm opencode detail` instead.
-
 ## Available Models
 
-The model list is served from the local snapshot or cache; run `llm opencode detail` to populate it (the only command that fetches).
+The model list is served from the local snapshot; run `llm opencode detail` to populate it (the only command that fetches).
 
 Routing comes straight from each model's `recommended_api`:
 

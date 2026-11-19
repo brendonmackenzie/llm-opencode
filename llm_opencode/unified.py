@@ -72,26 +72,6 @@ def get_opencode_models():
     return data
 
 
-def read_api_models_cache():
-    """Read the models-API list cache from disk without refresh or fetch.
-
-    Returns the ``data`` list when the file exists and parses, else ``None``.
-    There is intentionally no freshness check and no network fallback: the
-    plain listing is offline-only.
-    """
-    path = llm.user_dir() / "opencode_models.json"
-    if path.is_file():
-        try:
-            with open(path) as file:
-                cached = json.load(file)
-            data = cached.get("data") if isinstance(cached, dict) else None
-            if isinstance(data, list):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return None
-
-
 def api_model_to_entry(model):
     """Shape one models-API payload entry into a unified model entry.
 
