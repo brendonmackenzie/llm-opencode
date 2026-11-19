@@ -173,8 +173,8 @@ def test_opencode_plan_all_csv_rows_carry_their_own_plan_data(mock_fetch):
     by_key = {(row[0], row[5]): row for row in rows[1:]}
     glm_go = by_key[("glm-5.3", "go")]
     glm_plus = by_key[("glm-5.3", "go-plus")]
-    assert glm_go[12] == "500"
-    assert glm_plus[12] == "1000"
+    assert glm_go[13] == "500"
+    assert glm_plus[13] == "1000"
 
 
 @patch("llm_opencode.fetch_models_snapshot")
@@ -363,7 +363,7 @@ def test_opencode_models_detail_csv(mock_fetch):
     rows = list(csv.reader(io.StringIO(result.output)))
     assert rows[0] == [
         "model_id", "model_name", "canonical_id", "provider", "family",
-        "plan", "protocol", "recommended_api",
+        "plan", "protocol", "recommended_api", "supports_schema",
         "input_price", "output_price", "cached_read", "cached_write", "monthly_usage",
         "training", "zdr", "limited_regions", "featured", "open_weights",
         "knowledge", "release_date", "last_updated",
@@ -374,8 +374,8 @@ def test_opencode_models_detail_csv(mock_fetch):
     assert glm[0] == "glm-5.3"
     assert glm[5] == "go"
     assert glm[6] == "openai"
-    assert glm[8] == "1.4"
-    assert glm[12] == "500"
+    assert glm[9] == "1.4"
+    assert glm[13] == "500"
 
 
 @patch("llm_opencode.fetch_models_snapshot")
@@ -386,8 +386,8 @@ def test_opencode_models_detail_csv_ttl_cache_write_is_json(mock_fetch):
     result = runner.invoke(cli, ["opencode", "detail", "--format", "csv"])
     assert result.exit_code == 0, result.output
 
-    rows = list(csv.reader(io.StringIO(result.output)))
-    assert rows[1][11] == '{"30m": 0.125, "12h": 0.25}'
+    rows = [row for row in csv.reader(io.StringIO(result.output)) if row]
+    assert rows[1][12] == '{"30m": 0.125, "12h": 0.25}'
 
 
 @patch("llm_opencode.fetch_models_snapshot")
@@ -545,6 +545,80 @@ def test_opencode_models_detail_empty(mock_fetch):
     result = runner.invoke(cli, ["opencode", "detail"])
     assert result.exit_code == 0, result.output
     assert "No models found." in result.output
+
+
+@patch("llm_opencode.fetch_models_snapshot")
+def test_opencode_detail_schema_column(mock_fetch):
+    mock_fetch.return_value = _payload(
+        [
+            entry(api_model()),  # openai, structured_output: true
+            entry(anthropic_api_model()),  # advertises true, wire family says no
+            entry(api_model(model_id="omen-alpha"), capabilities={"structured_output": False}),
+        ]
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["opencode", "detail"])
+    assert result.exit_code == 0, result.output
+    assert "Schema" in result.output
+
+    rows = {
+        line.split()[0]: line for line in result.output.splitlines()
+        if line.startswith(("glm-5.3", "claude-haiku-5-5", "omen-alpha"))
+    }
+    assert " yes" in rows["glm-5.3"]
+    assert " no" in rows["claude-haiku-5-5"]
+    assert " no" in rows["omen-alpha"]
+
+
+@patch("llm_opencode.fetch_models_snapshot")
+def test_opencode_detail_csv_carries_supports_schema(mock_fetch):
+    mock_fetch.return_value = _payload(
+        [
+            entry(api_model()),
+            entry(anthropic_api_model()),
+        ]
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["opencode", "detail", "--format", "csv"])
+    assert result.exit_code == 0, result.output
+
+    rows = [row for row in csv.reader(io.StringIO(result.output)) if row]
+    assert "supports_schema" in rows[0]
+    index = rows[0].index("supports_schema")
+    by_id = {row[0]: row for row in rows[1:]}
+    assert by_id["glm-5.3"][index] == "True"
+    assert by_id["claude-haiku-5-5"][index] == "False"
+
+
+@patch("llm_opencode.fetch_models_snapshot")
+def test_opencode_detail_schema_capable_filter(mock_fetch):
+    mock_fetch.return_value = _payload(
+        [
+            entry(api_model()),
+            entry(responses_api_model()),
+            entry(anthropic_api_model()),
+            entry(api_model(model_id="omen-alpha"), capabilities={"structured_output": False}),
+        ]
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["opencode", "detail", "--schema-capable"])
+    assert result.exit_code == 0, result.output
+    assert "glm-5.3" in result.output
+    assert "gpt-6-luna" in result.output
+    assert "claude-haiku-5-5" not in result.output
+    assert "omen-alpha" not in result.output
+
+    # A selection filter like --search: applies to JSON too.
+    json_result = runner.invoke(
+        cli, ["opencode", "detail", "--schema-capable", "--format", "json"]
+    )
+    assert json_result.exit_code == 0, json_result.output
+    data = json.loads(json_result.output)
+    assert [m["model_id"] for m in data["models"]] == ["glm-5.3", "gpt-6-luna"]
+    assert all(m["supports_schema"] is True for m in data["models"])
 
 
 @patch("llm_opencode.fetch_models_snapshot")
@@ -738,7 +812,7 @@ def test_format_unified_table_tolerates_missing_blocks():
 
     result = format_unified_table([model])
 
-    assert result.count("—") == 1  # the usage dash; policies render yes/no
+    assert result.count("—") == 2  # usage + schema dashes; policies render yes/no
     assert "glm-5.3" in result
 
 

@@ -42,6 +42,11 @@ def register_commands(cli):
     @click.option("--search", help="Search models by name or ID")
     @click.option("--model", "model_id", help="Filter by exact model ID")
     @click.option(
+        "--schema-capable",
+        is_flag=True,
+        help="Only models that accept llm --schema structured output",
+    )
+    @click.option(
         "--plan",
         type=click.Choice([*PLANS, "all"]),
         default=DEFAULT_PLAN,
@@ -59,7 +64,7 @@ def register_commands(cli):
         help="Sort order (pricing format always sorts by input price)",
     )
     @click.option("-o", "--output", type=click.Path(), help="Write output to file")
-    def detail(format_, sort_by, search, model_id, plan, output):
+    def detail(format_, sort_by, search, model_id, plan, schema_capable, output):
         "Show detailed model info including pricing, usage, and protocols"
         from llm_opencode import fetch_models_snapshot
 
@@ -88,6 +93,8 @@ def register_commands(cli):
             ]
 
         routes = analyze_routes(unified)
+        if schema_capable:
+            routes = [route for route in routes if route.get("supports_schema")]
         formatters = {
             "table": format_unified_table,
             "csv": format_unified_csv,
@@ -314,7 +321,7 @@ def format_unified_table(models, plan=DEFAULT_PLAN):
     show_plans = _show_plans(plan)
     headers = [
         "Model ID", "Name", "Protocol", "Usage/Mo", "Input", "Output",
-        "Cache R", "Cache W", "Ctx", "Training", "ZDR",
+        "Cache R", "Cache W", "Ctx", "Schema", "Training", "ZDR",
     ]
     if plan == "all":
         headers.insert(0, "Plan")
@@ -338,6 +345,7 @@ def format_unified_table(models, plan=DEFAULT_PLAN):
                     _fmt_price(pricing.get("cached_read")),
                     _fmt_cached_write(pricing.get("cached_write")),
                     _fmt_tokens(limits.get("context")),
+                    _fmt_flag(model.get("supports_schema")),
                     _fmt_flag(model.get("training")),
                     _fmt_flag(model.get("zdr")),
                 ]
@@ -366,6 +374,7 @@ CSV_HEADERS = [
     "plan",
     "protocol",
     "recommended_api",
+    "supports_schema",
     "input_price",
     "output_price",
     "cached_read",
@@ -409,6 +418,7 @@ def format_unified_csv(models, plan=DEFAULT_PLAN):
                     current_plan,
                     protocol,
                     model.get("recommended_api", ""),
+                    model.get("supports_schema", ""),
                     pricing.get("input", ""),
                     pricing.get("output", ""),
                     pricing.get("cached_read", ""),

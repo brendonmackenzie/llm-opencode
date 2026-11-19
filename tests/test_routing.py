@@ -96,6 +96,28 @@ def test_derive_route_keeps_entry_fields():
     assert route["model_name"] == "GLM-5.3"
 
 
+def test_derive_route_supports_schema_follows_wire_family_and_capabilities():
+    from tests._payload import responses_api_model
+
+    assert derive_route(entry(api_model()))["supports_schema"] is True
+    assert derive_route(entry(responses_api_model()))["supports_schema"] is True
+
+    false_flag = derive_route(
+        entry(api_model(), capabilities={"structured_output": False})
+    )
+    assert false_flag["supports_schema"] is False
+
+    missing_flag = derive_route(entry(api_model(), capabilities={}))
+    assert missing_flag["supports_schema"] is False
+
+    # The Anthropic class has no schema translation: the flag stays honestly
+    # False even when the API advertises structured output.
+    assert derive_route(entry(anthropic_api_model()))["supports_schema"] is False
+
+    unregistered = derive_route(entry(google_api_model()))
+    assert unregistered["supports_schema"] is False
+
+
 # ─── api_base derivation ─────────────────────────────────────────────────────
 
 

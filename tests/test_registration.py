@@ -90,6 +90,40 @@ def test_register_models_routes_by_recommended_api(mock_get_key, mock_fetch, use
 
 @patch("llm_opencode.fetch_models_snapshot")
 @patch("llm.get_key", return_value="sk-test")
+def test_register_models_schema_support_follows_capabilities(
+    mock_get_key, mock_fetch, user_dir
+):
+    mock_fetch.return_value = snapshot(
+        entry(api_model()),  # structured_output: true
+        entry(api_model(model_id="omen-alpha"), capabilities={"structured_output": False}),
+        entry(responses_api_model()),
+        entry(anthropic_api_model()),  # capabilities say true, wire family says no
+    )
+
+    register = MagicMock()
+    register_models(register)
+
+    chat = register.call_args_list[0][0]
+    assert chat[0].supports_schema is True
+    assert chat[1].supports_schema is True
+
+    omen = register.call_args_list[1][0]
+    assert omen[0].supports_schema is False
+    assert omen[1].supports_schema is False
+
+    responses = register.call_args_list[2][0]
+    assert responses[0].supports_schema is True
+    assert responses[1].supports_schema is True
+
+    # The Anthropic custom class has no schema translation to the wire:
+    # the flag stays honestly False even when the API advertises support.
+    anthropic = register.call_args_list[3][0]
+    assert anthropic[0].supports_schema is False
+    assert anthropic[1].supports_schema is False
+
+
+@patch("llm_opencode.fetch_models_snapshot")
+@patch("llm.get_key", return_value="sk-test")
 def test_register_models_skips_unknown_and_google_style(
     mock_get_key, mock_fetch, user_dir
 ):
